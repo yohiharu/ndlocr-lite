@@ -1,0 +1,1462 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>OCR XML Viewer</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: system-ui, sans-serif;
+    background: #222;
+}
+
+/* =========================
+   ツールバー
+========================= */
+
+#toolbar {
+    height: 54px;
+    flex-shrink: 0;
+
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    padding: 7px 10px;
+
+    background: #111;
+    color: white;
+
+    border-bottom: 1px solid #444;
+}
+
+button,
+label.button {
+    padding: 6px 12px;
+
+    border: 1px solid #666;
+    border-radius: 4px;
+
+    background: #333;
+    color: white;
+
+    cursor: pointer;
+
+    font-size: 13px;
+}
+
+button:hover,
+label.button:hover {
+    background: #555;
+}
+
+#imageInput {
+    display: none;
+}
+
+#zoom {
+    width: 100px;
+}
+
+#opacity {
+    width: 100px;
+}
+
+#zoomText {
+    width: 45px;
+}
+
+#opacityText {
+    width: 40px;
+}
+
+#status {
+    margin-left: auto;
+
+    color: #aaa;
+
+    font-size: 12px;
+}
+
+/* =========================
+   メイン
+========================= */
+
+#main {
+    display: flex;
+
+    height: calc(100% - 54px);
+
+    min-height: 0;
+}
+
+/* =========================
+   XML入力
+========================= */
+
+#inputPanel {
+    width: 400px;
+
+    flex-shrink: 0;
+
+    display: flex;
+    flex-direction: column;
+
+    background: #181818;
+
+    border-right: 1px solid #444;
+}
+
+#inputPanel h3 {
+    margin: 0;
+
+    padding: 10px 12px;
+
+    color: white;
+
+    font-size: 14px;
+}
+
+#xmlInput {
+    flex: 1;
+
+    width: 100%;
+
+    resize: none;
+
+    padding: 12px;
+
+    border: 0;
+    outline: 0;
+
+    background: #0c0c0c;
+
+    color: #ddd;
+
+    font-family:
+        Consolas,
+        "Courier New",
+        monospace;
+
+    font-size: 12px;
+
+    line-height: 1.5;
+}
+
+#parseButton {
+    margin: 10px;
+
+    padding: 10px;
+
+    background: #1677ff;
+
+    border: none;
+}
+
+#parseButton:hover {
+    background: #4090ff;
+}
+
+/* =========================
+   表示領域
+========================= */
+
+#viewport {
+    position: relative;
+
+    flex: 1;
+
+    overflow: auto;
+
+    background:
+        linear-gradient(45deg, #333 25%, transparent 25%),
+        linear-gradient(-45deg, #333 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #333 75%),
+        linear-gradient(-45deg, transparent 75%, #333 75%);
+
+    background-size: 30px 30px;
+
+    background-position:
+        0 0,
+        0 15px,
+        15px -15px,
+        -15px 0;
+}
+
+/* =========================
+   ページ
+========================= */
+
+#page {
+    position: relative;
+
+    width: 6016px;
+    height: 4016px;
+
+    margin: 30px;
+
+    background: white;
+
+    transform-origin: top left;
+
+    box-shadow: 0 0 20px #000;
+}
+
+/* =========================
+   原画像
+========================= */
+
+#backgroundImage {
+    position: absolute;
+
+    left: 0;
+    top: 0;
+
+    width: 100%;
+    height: 100%;
+
+    object-fit: fill;
+
+    display: none;
+
+    z-index: 1;
+
+    pointer-events: none;
+}
+
+#backgroundImage.visible {
+    display: block;
+}
+
+/* =========================
+   OCRレイヤー
+========================= */
+
+#ocrLayer {
+    position: absolute;
+
+    left: 0;
+    top: 0;
+
+    width: 100%;
+    height: 100%;
+
+    z-index: 2;
+
+    pointer-events: none;
+}
+
+.ocr-line {
+    position: absolute;
+
+    white-space: nowrap;
+
+    color: #ff0000;
+
+    font-family:
+        "Yu Mincho",
+        "Hiragino Mincho ProN",
+        "Noto Serif JP",
+        "Noto Serif CJK JP",
+        serif;
+
+    font-weight: normal;
+
+    writing-mode: vertical-rl;
+
+    text-orientation: upright;
+
+    transform-origin: top right;
+
+    cursor: pointer;
+
+    pointer-events: auto;
+
+    text-shadow:
+        0 0 2px white,
+        0 0 2px white,
+        0 0 2px white;
+}
+
+.ocr-line:hover {
+    background: rgba(255, 255, 0, .4);
+
+    color: #ff0000;
+}
+
+.ocr-line.selected {
+    background: rgba(255, 165, 0, .55);
+
+    outline: 1px solid #ff6600;
+}
+
+/* 横書き */
+
+.ocr-line.horizontal {
+    writing-mode: horizontal-tb;
+}
+
+/* デバッグ */
+
+.debug .ocr-line {
+    outline: 1px solid rgba(0, 100, 255, .6);
+}
+
+/* =========================
+   画像ドロップ
+========================= */
+
+#dropMessage {
+    position: fixed;
+
+    left: 50%;
+    top: 50%;
+
+    transform: translate(-50%, -50%);
+
+    z-index: 1000;
+
+    padding: 30px 50px;
+
+    border: 3px dashed #fff;
+
+    border-radius: 12px;
+
+    background: rgba(0, 0, 0, .75);
+
+    color: white;
+
+    font-size: 20px;
+
+    display: none;
+
+    pointer-events: none;
+}
+
+#dropMessage.visible {
+    display: block;
+}
+
+/* =========================
+   OCR詳細
+========================= */
+
+#details {
+    position: fixed;
+
+    right: 15px;
+    bottom: 15px;
+
+    width: 330px;
+
+    padding: 12px;
+
+    background: rgba(20, 20, 20, .95);
+
+    color: white;
+
+    border: 1px solid #555;
+
+    border-radius: 6px;
+
+    z-index: 2000;
+
+    display: none;
+
+    font-size: 12px;
+}
+
+#details pre {
+    white-space: pre-wrap;
+
+    margin: 8px 0 0;
+}
+
+/* =========================
+   エラー
+========================= */
+
+#error {
+    position: fixed;
+
+    left: 50%;
+    top: 80px;
+
+    transform: translateX(-50%);
+
+    z-index: 3000;
+
+    max-width: 700px;
+
+    padding: 12px 20px;
+
+    background: #b00020;
+
+    color: white;
+
+    border-radius: 5px;
+
+    display: none;
+}
+</style>
+</head>
+
+
+<body>
+
+<!-- =========================
+     ツールバー
+========================= -->
+
+<div id="toolbar">
+
+    <label class="button">
+
+        画像を選択
+
+        <input
+            id="imageInput"
+            type="file"
+            accept="image/*"
+        >
+
+    </label>
+
+
+    <button id="toggleImage">
+        画像表示
+    </button>
+
+
+    <button id="ocrButton" disabled>
+        OCR実行
+    </button>
+
+
+    <span>
+        OCR透明度
+    </span>
+
+    <input
+        id="opacity"
+        type="range"
+        min="0"
+        max="100"
+        value="100"
+    >
+
+    <span id="opacityText">
+        100%
+    </span>
+
+
+    <button id="fitButton">
+        全体表示
+    </button>
+
+
+    <button id="minusButton">
+        −
+    </button>
+
+
+    <input
+        id="zoom"
+        type="range"
+        min="10"
+        max="200"
+        value="30"
+    >
+
+    <span id="zoomText">
+        30%
+    </span>
+
+
+    <button id="plusButton">
+        ＋
+    </button>
+
+
+    <button id="debugButton">
+        座標表示
+    </button>
+
+
+    <span id="status">
+        XML未入力
+    </span>
+
+</div>
+
+
+<!-- =========================
+     メイン
+========================= -->
+
+<div id="main">
+
+    <!-- XML -->
+
+    <section id="inputPanel">
+
+        <h3>
+            OCR XML
+        </h3>
+
+
+        <textarea
+            id="xmlInput"
+            spellcheck="false"
+            placeholder="ここにOCR XMLを貼り付けてください"
+        ></textarea>
+
+
+        <button id="parseButton">
+            XMLを表示
+        </button>
+
+    </section>
+
+
+    <!-- 表示 -->
+
+    <section
+        id="viewport"
+        tabindex="0"
+    >
+
+        <div id="page">
+
+            <img
+                id="backgroundImage"
+                alt=""
+            >
+
+            <div id="ocrLayer"></div>
+
+        </div>
+
+    </section>
+
+</div>
+
+
+<!-- =========================
+     ドロップ表示
+========================= -->
+
+<div id="dropMessage">
+    ここに画像をドロップ
+</div>
+
+
+<!-- =========================
+     OCR詳細
+========================= -->
+
+<div id="details">
+
+    <strong>
+        OCR情報
+    </strong>
+
+    <pre id="detailsText"></pre>
+
+</div>
+
+
+<div id="error"></div>
+
+
+<script>
+
+const xmlInput =
+    document.getElementById("xmlInput");
+
+const parseButton =
+    document.getElementById("parseButton");
+
+const page =
+    document.getElementById("page");
+
+const ocrLayer =
+    document.getElementById("ocrLayer");
+
+const viewport =
+    document.getElementById("viewport");
+
+const backgroundImage =
+    document.getElementById("backgroundImage");
+
+const imageInput =
+    document.getElementById("imageInput");
+
+const zoom =
+    document.getElementById("zoom");
+
+const zoomText =
+    document.getElementById("zoomText");
+
+const opacity =
+    document.getElementById("opacity");
+
+const opacityText =
+    document.getElementById("opacityText");
+
+const status =
+    document.getElementById("status");
+
+const details =
+    document.getElementById("details");
+
+const detailsText =
+    document.getElementById("detailsText");
+
+const dropMessage =
+    document.getElementById("dropMessage");
+
+const errorBox =
+    document.getElementById("error");
+
+const ocrButton =
+    document.getElementById("ocrButton");
+
+
+let pageWidth = 6016;
+let pageHeight = 4016;
+
+let scale = 0.30;
+
+let imageURL = null;
+
+let imageFile = null;
+
+
+/* ==================================================
+   エラー表示
+================================================== */
+
+function showError(message) {
+
+    errorBox.textContent = message;
+
+    errorBox.style.display = "block";
+
+    setTimeout(() => {
+
+        errorBox.style.display = "none";
+
+    }, 5000);
+
+}
+
+
+/* ==================================================
+   XML解析
+================================================== */
+
+function parseXML() {
+
+    const source =
+        xmlInput.value.trim();
+
+
+    if (!source) {
+
+        showError(
+            "XMLを入力してください"
+        );
+
+        return;
+    }
+
+
+    const parser =
+        new DOMParser();
+
+
+    const xml =
+        parser.parseFromString(
+            source,
+            "application/xml"
+        );
+
+
+    const parserError =
+        xml.querySelector("parsererror");
+
+
+    if (parserError) {
+
+        showError(
+            "XMLの解析に失敗しました"
+        );
+
+        return;
+    }
+
+
+    /*
+     * PAGE
+     */
+
+    const pageNode =
+        xml.querySelector("PAGE");
+
+
+    if (pageNode) {
+
+        pageWidth =
+            Number(
+                pageNode.getAttribute("WIDTH")
+            ) || 6016;
+
+        pageHeight =
+            Number(
+                pageNode.getAttribute("HEIGHT")
+            ) || 4016;
+
+    }
+
+
+    /*
+     * ページサイズ
+     */
+
+    page.style.width =
+        pageWidth + "px";
+
+    page.style.height =
+        pageHeight + "px";
+
+
+    /*
+     * OCRクリア
+     */
+
+    ocrLayer.innerHTML = "";
+
+
+    /*
+     * LINE
+     */
+
+    const lines =
+        [...xml.querySelectorAll("LINE")];
+
+
+    let count = 0;
+
+
+    lines.forEach((line, index) => {
+
+        const x =
+            Number(
+                line.getAttribute("X")
+            ) || 0;
+
+
+        const y =
+            Number(
+                line.getAttribute("Y")
+            ) || 0;
+
+
+        const w =
+            Number(
+                line.getAttribute("WIDTH")
+            ) || 0;
+
+
+        const h =
+            Number(
+                line.getAttribute("HEIGHT")
+            ) || 0;
+
+
+        const conf =
+            line.getAttribute("CONF")
+            || "";
+
+
+        const order =
+            line.getAttribute("ORDER")
+            || "";
+
+
+        const text =
+            line.getAttribute("STRING")
+            || "";
+
+
+        if (!text.trim()) {
+            return;
+        }
+
+
+        /*
+         * 要素作成
+         */
+
+        const element =
+            document.createElement("div");
+
+
+        element.className =
+            "ocr-line";
+
+
+        element.textContent =
+            text;
+
+
+        /*
+         * 座標
+         */
+
+        element.style.left =
+            x + "px";
+
+        element.style.top =
+            y + "px";
+
+
+        /*
+         * OCR文字サイズ
+         *
+         * 縦書きの場合、
+         * 高さ / 文字数
+         */
+
+        const chars =
+            [...text].length;
+
+
+        let fontSize =
+            chars > 0
+                ? h / chars
+                : 55;
+
+
+        fontSize =
+            Math.max(
+                15,
+                Math.min(
+                    180,
+                    fontSize
+                )
+            );
+
+
+        element.style.fontSize =
+            fontSize + "px";
+
+
+        /*
+         * OCR領域
+         */
+
+        element.style.width =
+            Math.max(w, 1) + "px";
+
+
+        element.style.height =
+            Math.max(h, 1) + "px";
+
+
+        /*
+         * 横書き判定
+         */
+
+        if (
+            w > h * 1.5
+        ) {
+
+            element.classList.add(
+                "horizontal"
+            );
+
+        }
+
+
+        /*
+         * メタデータ
+         */
+
+        element.dataset.x = x;
+        element.dataset.y = y;
+        element.dataset.width = w;
+        element.dataset.height = h;
+        element.dataset.conf = conf;
+        element.dataset.order = order;
+
+
+        /*
+         * クリック
+         */
+
+        element.addEventListener(
+            "click",
+            event => {
+
+                event.stopPropagation();
+
+
+                document
+                    .querySelectorAll(
+                        ".ocr-line.selected"
+                    )
+                    .forEach(el => {
+
+                        el.classList.remove(
+                            "selected"
+                        );
+
+                    });
+
+
+                element.classList.add(
+                    "selected"
+                );
+
+
+                details.style.display =
+                    "block";
+
+
+                detailsText.textContent =
+`文字:
+${text}
+
+座標:
+X = ${x}
+Y = ${y}
+
+サイズ:
+WIDTH = ${w}
+HEIGHT = ${h}
+
+CONF:
+${conf}
+
+ORDER:
+${order}`;
+
+            }
+        );
+
+
+        ocrLayer.appendChild(
+            element
+        );
+
+
+        count++;
+
+    });
+
+
+    status.textContent =
+        `OCR ${count}件 / ${pageWidth} × ${pageHeight}`;
+
+
+    fitPage();
+
+}
+
+
+/* ==================================================
+   画像読み込み
+================================================== */
+
+function loadImage(file) {
+
+    if (!file) {
+        return;
+    }
+
+
+    if (!file.type.startsWith("image/")) {
+
+        showError(
+            "画像ファイルを指定してください"
+        );
+
+        return;
+    }
+
+
+    if (imageURL) {
+
+        URL.revokeObjectURL(
+            imageURL
+        );
+
+    }
+
+
+    imageFile = file;
+
+    ocrButton.disabled = false;
+
+
+    imageURL =
+        URL.createObjectURL(file);
+
+
+    backgroundImage.src =
+        imageURL;
+
+
+    backgroundImage.classList.add(
+        "visible"
+    );
+
+
+    /*
+     * XMLのPAGEサイズと画像サイズが
+     * 一致することを前提として表示。
+     *
+     * サイズが異なる場合も、
+     * PAGE領域いっぱいに合わせる。
+     */
+
+    backgroundImage.onload = () => {
+
+        status.textContent +=
+            ` / 画像 ${backgroundImage.naturalWidth}×${backgroundImage.naturalHeight}`;
+
+    };
+
+}
+
+
+/* ファイル選択 */
+
+imageInput.addEventListener(
+    "change",
+    event => {
+
+        loadImage(
+            event.target.files[0]
+        );
+
+    }
+);
+
+
+/* ==================================================
+   OCR実行（server.py の /api/ocr に送信）
+================================================== */
+
+async function runOCR() {
+
+    if (!imageFile) {
+
+        showError(
+            "先に画像を選択してください"
+        );
+
+        return;
+    }
+
+
+    ocrButton.disabled = true;
+
+    status.textContent =
+        "OCR処理中…";
+
+
+    const formData =
+        new FormData();
+
+    formData.append(
+        "image",
+        imageFile
+    );
+
+
+    try {
+
+        const response =
+            await fetch(
+                "api/ocr",
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+
+
+        if (!response.ok) {
+
+            const body =
+                await response.json()
+                    .catch(() => ({}));
+
+            throw new Error(
+                body.error
+                || `OCRに失敗しました (${response.status})`
+            );
+
+        }
+
+
+        xmlInput.value =
+            await response.text();
+
+        parseXML();
+
+    } catch (error) {
+
+        status.textContent =
+            "OCR失敗";
+
+        showError(
+            error instanceof TypeError
+                ? "OCRサーバーに接続できません。page/server.py を起動し、http://127.0.0.1:5000 から開いてください"
+                : error.message
+        );
+
+    } finally {
+
+        ocrButton.disabled = false;
+
+    }
+
+}
+
+ocrButton.addEventListener(
+    "click",
+    runOCR
+);
+
+
+/* ==================================================
+   ドラッグ＆ドロップ
+================================================== */
+
+let dragCounter = 0;
+
+
+viewport.addEventListener(
+    "dragenter",
+    event => {
+
+        event.preventDefault();
+
+        dragCounter++;
+
+        dropMessage.classList.add(
+            "visible"
+        );
+
+    }
+);
+
+
+viewport.addEventListener(
+    "dragover",
+    event => {
+
+        event.preventDefault();
+
+    }
+);
+
+
+viewport.addEventListener(
+    "dragleave",
+    event => {
+
+        event.preventDefault();
+
+        dragCounter--;
+
+        if (dragCounter <= 0) {
+
+            dropMessage.classList.remove(
+                "visible"
+            );
+
+            dragCounter = 0;
+
+        }
+
+    }
+);
+
+
+viewport.addEventListener(
+    "drop",
+    event => {
+
+        event.preventDefault();
+
+        dragCounter = 0;
+
+        dropMessage.classList.remove(
+            "visible"
+        );
+
+
+        const files =
+            [...event.dataTransfer.files];
+
+
+        const image =
+            files.find(
+                file =>
+                    file.type.startsWith("image/")
+            );
+
+
+        if (image) {
+
+            loadImage(image);
+
+        }
+
+    }
+);
+
+
+/* ==================================================
+   画像表示/非表示
+================================================== */
+
+document
+    .getElementById("toggleImage")
+    .addEventListener(
+        "click",
+        () => {
+
+            backgroundImage.classList.toggle(
+                "visible"
+            );
+
+        }
+    );
+
+
+/* ==================================================
+   OCR透明度
+================================================== */
+
+opacity.addEventListener(
+    "input",
+    () => {
+
+        const value =
+            Number(opacity.value);
+
+
+        ocrLayer.style.opacity =
+            value / 100;
+
+
+        opacityText.textContent =
+            value + "%";
+
+    }
+);
+
+
+/* ==================================================
+   ズーム
+================================================== */
+
+function setZoom(percent) {
+
+    percent =
+        Math.max(
+            10,
+            Math.min(
+                200,
+                percent
+            )
+        );
+
+
+    scale =
+        percent / 100;
+
+
+    page.style.transform =
+        `scale(${scale})`;
+
+
+    zoom.value =
+        percent;
+
+
+    zoomText.textContent =
+        percent + "%";
+
+}
+
+
+zoom.addEventListener(
+    "input",
+    () => {
+
+        setZoom(
+            Number(zoom.value)
+        );
+
+    }
+);
+
+
+document
+    .getElementById("plusButton")
+    .addEventListener(
+        "click",
+        () => {
+
+            setZoom(
+                Number(zoom.value) + 10
+            );
+
+        }
+    );
+
+
+document
+    .getElementById("minusButton")
+    .addEventListener(
+        "click",
+        () => {
+
+            setZoom(
+                Number(zoom.value) - 10
+            );
+
+        }
+    );
+
+
+/* ==================================================
+   全体表示
+================================================== */
+
+function fitPage() {
+
+    const width =
+        viewport.clientWidth - 60;
+
+
+    const height =
+        viewport.clientHeight - 60;
+
+
+    const sx =
+        width / pageWidth;
+
+
+    const sy =
+        height / pageHeight;
+
+
+    const percent =
+        Math.floor(
+            Math.min(
+                sx,
+                sy
+            ) * 100
+        );
+
+
+    setZoom(
+        Math.max(
+            10,
+            Math.min(
+                200,
+                percent
+            )
+        )
+    );
+
+
+    viewport.scrollLeft = 0;
+
+    viewport.scrollTop = 0;
+
+}
+
+
+document
+    .getElementById("fitButton")
+    .addEventListener(
+        "click",
+        fitPage
+    );
+
+
+/* ==================================================
+   座標表示
+================================================== */
+
+document
+    .getElementById("debugButton")
+    .addEventListener(
+        "click",
+        () => {
+
+            document.body.classList.toggle(
+                "debug"
+            );
+
+        }
+    );
+
+
+/* ==================================================
+   Ctrl + Enter
+================================================== */
+
+xmlInput.addEventListener(
+    "keydown",
+    event => {
+
+        if (
+            event.ctrlKey &&
+            event.key === "Enter"
+        ) {
+
+            parseXML();
+
+        }
+
+    }
+);
+
+
+/* ==================================================
+   初期化
+================================================== */
+
+parseButton.addEventListener(
+    "click",
+    parseXML
+);
+
+setZoom(30);
+
+</script>
+
+</body>
+</html>
+
