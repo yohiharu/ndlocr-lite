@@ -2,13 +2,13 @@
 # OCR XML Viewer を一発で起動する。
 #
 # 初回のみ uv の導入（未導入の場合）、仮想環境 .venv の作成、依存関係のインストールを行い、
-# 2回目以降はそのまま server.py を起動してブラウザでページを開く。
+# 2回目以降はそのまま server.py を起動する（--open 指定時のみブラウザでページを開く）。
 # Python は uv が 3.10 以上のものを見つけ、無ければ取得するため、システムの Python 環境は問わない。
 #
 # 使い方:
 #     ./page/start.sh          # http://127.0.0.1:5000 で起動
 #     ./page/start.sh 8080     # ポートを指定して起動
-#     ./page/start.sh --no-browser
+#     ./page/start.sh --open   # 起動後にブラウザで開く
 #
 # 終了は Ctrl+C。
 
@@ -22,10 +22,11 @@ DEPS_STAMP="$VENV_DIR/.deps-installed"
 PYTHON_SPEC=">=3.10"
 HOST="0.0.0.0"
 PORT="5000"
-OPEN_BROWSER=1
+OPEN_BROWSER=0
 
 for arg in "$@"; do
     case "$arg" in
+        --open) OPEN_BROWSER=1 ;;
         --no-browser) OPEN_BROWSER=0 ;;
         *) PORT="$arg" ;;
     esac
@@ -85,7 +86,7 @@ if (exec 3<>"/dev/tcp/$HOST/$PORT") 2>/dev/null; then
     die "ポート $PORT は既に使用されています。別のポートを指定してください（例: ./page/start.sh 8080）。"
 fi
 
-# 5. サーバー起動後にブラウザを開く（起動完了を待ってから）
+# 5. --open 指定時のみ、サーバー起動後にブラウザを開く（起動完了を待ってから）
 if [ "$OPEN_BROWSER" -eq 1 ]; then
     (
         for _ in $(seq 1 60); do

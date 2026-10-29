@@ -288,6 +288,61 @@ dialog::backdrop {
     font-size: 13px;
 }
 
+.pageKind {
+    flex-shrink: 0;
+
+    padding: 4px 6px;
+
+    border: 1px solid #666;
+    border-radius: 4px;
+
+    background: #0c0c0c;
+
+    color: white;
+
+    font-size: 12px;
+}
+
+.searchKindRow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+
+    gap: 8px;
+
+    padding: 0 10px 8px;
+
+    color: #aaa;
+
+    font-size: 12px;
+}
+
+#searchKinds {
+    display: flex;
+    flex-wrap: wrap;
+
+    gap: 12px;
+}
+
+#searchKinds label {
+    display: flex;
+    align-items: center;
+
+    gap: 4px;
+
+    color: #ddd;
+
+    cursor: pointer;
+}
+
+.pageMeta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: 8px;
+}
+
 .tabInfo {
     padding: 0 10px 8px;
 
@@ -459,6 +514,83 @@ dialog::backdrop {
 /* =========================
    表示領域
 ========================= */
+
+/* 表示の枠。種別の選択をスクロールしても動かない位置に重ねるため、表示領域を包む */
+
+#viewerFrame {
+    position: relative;
+
+    flex: 1;
+
+    min-width: 0;
+    min-height: 0;
+
+    display: flex;
+}
+
+/* 表示中のページの種別。画像の左上に重ねる */
+
+#kindOverlay {
+    position: absolute;
+
+    top: 10px;
+    left: 10px;
+
+    z-index: 5;
+
+    display: flex;
+
+    padding: 4px;
+
+    border: 1px solid #555;
+    border-radius: 6px;
+
+    background: rgba(17, 17, 17, .85);
+}
+
+#kindOverlay button {
+    padding: 4px 10px;
+
+    border-radius: 0;
+
+    background: #222;
+
+    color: #bbb;
+
+    font-size: 13px;
+}
+
+#kindOverlay button + button {
+    margin-left: -1px;
+}
+
+#kindOverlay button:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+#kindOverlay button:last-child {
+    border-radius: 0 4px 4px 0;
+}
+
+#kindOverlay button:hover {
+    background: #333;
+}
+
+#kindOverlay button.active {
+    position: relative;
+
+    border-color: #1677ff;
+
+    background: #1f3b5c;
+
+    color: white;
+}
+
+#kindOverlay button:disabled {
+    opacity: .5;
+
+    cursor: default;
+}
 
 #viewport {
     position: relative;
@@ -916,6 +1048,15 @@ dialog::backdrop {
             </div>
 
 
+            <div class="searchKindRow">
+
+                <span>検索する種別</span>
+
+                <div id="searchKinds"></div>
+
+            </div>
+
+
             <div id="searchInfo" class="tabInfo">
                 一括OCRの完了後に検索できます
             </div>
@@ -930,23 +1071,32 @@ dialog::backdrop {
 
     <!-- 表示 -->
 
-    <section
-        id="viewport"
-        tabindex="0"
-    >
+    <div id="viewerFrame">
 
-        <div id="page">
+        <section
+            id="viewport"
+            tabindex="0"
+        >
 
-            <img
-                id="backgroundImage"
-                alt=""
-            >
+            <div id="page">
 
-            <div id="ocrLayer"></div>
+                <img
+                    id="backgroundImage"
+                    alt=""
+                >
 
-        </div>
+                <div id="ocrLayer"></div>
 
-    </section>
+            </div>
+
+        </section>
+
+
+        <!-- 一覧のページを表示しているときだけ出す。スクロールしても動かないよう、表示領域の外に置く -->
+
+        <div id="kindOverlay" hidden></div>
+
+    </div>
 
 </div>
 
@@ -989,7 +1139,8 @@ dialog::backdrop {
         <p>
             「既存の結果を使う」は、結果があるページを読み込み、
             結果がないページ（失敗したものを含む）だけOCRします。<br>
-            「やり直す」は、すべてのページをOCRし直して ocr.json を上書きします。
+            「やり直す」は、すべてのページをOCRし直して ocr.json を上書きします。<br>
+            種別は、どちらを選んでも読み込みます。
         </p>
 
         <div class="dialogActions">
@@ -1069,6 +1220,10 @@ const ocrButton =
 
 let pageWidth = 6016;
 let pageHeight = 4016;
+
+/* 今の表示が XML の PAGE の大きさを使っているか。使っていなければ画像の大きさで表示する */
+
+let pageSizeFromXML = false;
 
 let scale = 0.30;
 
@@ -1162,6 +1317,8 @@ function parseXML() {
             ) || 4016;
 
     }
+
+    pageSizeFromXML = Boolean(pageNode);
 
 
     /*
@@ -1432,6 +1589,20 @@ function loadImage(file) {
     }
 
 
+    /* 一覧のページ以外の画像を開いたら、そのページは表示していないことにする */
+
+    const current =
+        batchPages[currentPageIndex];
+
+    if (current && current.file !== file) {
+
+        currentPageIndex = -1;
+
+        renderPageList();
+
+    }
+
+
     if (imageURL) {
 
         URL.revokeObjectURL(
@@ -1460,14 +1631,26 @@ function loadImage(file) {
 
 
     /*
-     * XMLのPAGEサイズと画像サイズが
-     * 一致することを前提として表示。
-     *
-     * サイズが異なる場合も、
-     * PAGE領域いっぱいに合わせる。
+     * XMLのPAGEサイズがあるときは、そのサイズの領域いっぱいに画像を合わせる（OCRの座標はこのサイズ）。
+     * PAGEサイズがないときは、前のページの大きさを使わず、画像の大きさで表示する
      */
 
     backgroundImage.onload = () => {
+
+        if (!pageSizeFromXML) {
+
+            pageWidth = backgroundImage.naturalWidth;
+
+            pageHeight = backgroundImage.naturalHeight;
+
+            page.style.width = pageWidth + "px";
+
+            page.style.height = pageHeight + "px";
+
+            fitPage();
+
+        }
+
 
         status.textContent +=
             ` / 画像 ${backgroundImage.naturalWidth}×${backgroundImage.naturalHeight}`;
@@ -1954,6 +2137,20 @@ const STATUS_LABELS = {
     error: "失敗"
 };
 
+/*
+ * ページの種別。ページごとに選び、ocr.json に保存する。検索でこの種別に絞れる。
+ * 最初はすべて未分類。種別のない結果（種別を入れる前に書いたもの）も未分類として扱う。
+ * 並びは、種別を選ぶボタンに並ぶ順
+ */
+
+const PAGE_KIND_LABELS = {
+    unclassified: "未分類",
+    classic: "古典籍",
+    metadata: "メタデータ"
+};
+
+const DEFAULT_PAGE_KIND = "unclassified";
+
 const folderButton =
     document.getElementById("folderButton");
 
@@ -1996,13 +2193,19 @@ const searchButton =
 const searchInfo =
     document.getElementById("searchInfo");
 
+const searchKinds =
+    document.getElementById("searchKinds");
+
+const kindOverlay =
+    document.getElementById("kindOverlay");
+
 const searchResults =
     document.getElementById("searchResults");
 
 
 /*
  * フォルダ内の画像。
- * { file, name, status, error, xml, json, searchData, directory }
+ * { file, name, status, error, xml, json, searchData, directory, kind }
  *
  * 画像のあるディレクトリごとの一覧。
  * { path, handle, resultHandle, pages, saved }
@@ -2199,6 +2402,17 @@ function isImageName(name) {
     return imageExtensions.includes(
         name.slice(dot + 1).toLowerCase()
     );
+
+}
+
+
+function normalizePageKind(kind) {
+
+    /* 保存されている値が知らない種別なら、既定の種別にする */
+
+    return Object.hasOwn(PAGE_KIND_LABELS, kind)
+        ? kind
+        : DEFAULT_PAGE_KIND;
 
 }
 
@@ -2483,7 +2697,18 @@ function appendFolderContents(node, depth) {
                 : STATUS_LABELS[batchPage.status];
 
 
-        item.append(name, state);
+        const meta =
+            document.createElement("div");
+
+        meta.className = "pageMeta";
+
+        meta.append(
+            state,
+            createKindSelect(batchPage)
+        );
+
+
+        item.append(name, meta);
 
         item.addEventListener(
             "click",
@@ -2510,6 +2735,129 @@ function renderPageList() {
         buildPageTree(),
         0
     );
+
+
+    /* 表示中の画像の種別も、一覧と同じタイミングで合わせる */
+
+    renderKindOverlay();
+
+}
+
+
+/*
+ * 表示中のページ（一覧のページ）の種別を、画像の上のボタンに合わせる。
+ * 一覧のページを表示していないとき（画像を直接開いたとき）は出さない
+ */
+
+function renderKindOverlay() {
+
+    const batchPage =
+        batchPages[currentPageIndex];
+
+    kindOverlay.hidden = !batchPage;
+
+    if (!batchPage) {
+
+        return;
+
+    }
+
+    kindOverlay.querySelectorAll("button").forEach(button => {
+
+        const isActive =
+            button.dataset.kind === batchPage.kind;
+
+        button.classList.toggle("active", isActive);
+
+        button.setAttribute("aria-pressed", String(isActive));
+
+        /* 一括OCR中は、結果を書いているフォルダと競合しないように変えられない */
+
+        button.disabled = batchRunning;
+
+    });
+
+}
+
+
+function makeKindOptions() {
+
+    return Object.entries(PAGE_KIND_LABELS).map(([value, label]) =>
+        new Option(label, value)
+    );
+
+}
+
+
+function createKindSelect(batchPage) {
+
+    const select =
+        document.createElement("select");
+
+    select.className = "pageKind";
+
+    /* 一括OCR中は、結果を書いているフォルダと競合しないように変えられない */
+
+    select.disabled = batchRunning;
+
+    select.replaceChildren(...makeKindOptions());
+
+    select.value = batchPage.kind;
+
+
+    /* 種別を選ぶときに、そのページを開いてしまわないようにする */
+
+    select.addEventListener(
+        "click",
+        event => event.stopPropagation()
+    );
+
+    select.addEventListener(
+        "change",
+        () => changePageKind(batchPage, select.value)
+    );
+
+    return select;
+
+}
+
+
+/*
+ * 種別を変えたら、そのフォルダの ocr.json をすぐ書く。
+ * OCRを実行しなくても種別が残るように、ここで保存する
+ */
+
+async function changePageKind(batchPage, kind) {
+
+    const directory =
+        batchPage.directory;
+
+    batchPage.kind = kind;
+
+    /* 一覧の選択と、画像の上のボタンを、すぐ合わせる */
+
+    renderPageList();
+
+    /* 書けなかったときは、ファイルの内容と違うので保存済みとしない */
+
+    directory.saved = false;
+
+    try {
+
+        await saveDirectoryResult(directory);
+
+        directory.saved =
+            isDirectoryFinished(directory);
+
+    } catch (error) {
+
+        showError(
+            `${directory.path} に種別を書けませんでした: ${error.message}`
+        );
+
+    }
+
+    updateBatchProgress();
 
 }
 
@@ -2749,6 +3097,10 @@ async function runBatchOCR() {
 
     batchRunning = false;
 
+    /* 一括OCR中は無効にしていた種別の選択を、ここで戻す */
+
+    renderPageList();
+
     updateBatchControls();
 
     updateBatchProgress();
@@ -2792,6 +3144,10 @@ function showPage(index) {
     } else {
 
         ocrLayer.innerHTML = "";
+
+        /* 結果がないのでPAGEの大きさもない。画像の大きさで表示する（onload で合わせる） */
+
+        pageSizeFromXML = false;
 
         const state =
             batchPage.status === "error"
@@ -2889,7 +3245,8 @@ async function scanDirectory(dirHandle, path, scan) {
                 xml: "",
                 json: null,
                 searchData: null,
-                directory
+                directory,
+                kind: DEFAULT_PAGE_KIND
             };
 
             directory.pages.push(batchPage);
@@ -2924,7 +3281,7 @@ async function scanDirectory(dirHandle, path, scan) {
 function askReuseChoice(count) {
 
     reuseMessage.textContent =
-        `${count} 件のフォルダに、前回のOCR結果（${RESULT_FILE_NAME}）があります。`;
+        `${count} 件のフォルダに、前回のOCR結果と種別（${RESULT_FILE_NAME}）があります。`;
 
     return new Promise(resolve => {
 
@@ -2942,11 +3299,12 @@ function askReuseChoice(count) {
 
 
 /*
- * 既存の ocr.json を読み、結果のあるページは OCR せずに済むように結果を戻す。
+ * 既存の ocr.json を読み、種別を戻す。
+ * withOCR のときは、結果のあるページも OCR せずに済むように結果を戻す。
  * 結果がないページ（失敗したものを含む）は未処理のままにし、実行時に OCR する
  */
 
-async function loadDirectoryResult(directory) {
+async function loadDirectoryResult(directory, withOCR) {
 
     const file =
         await directory.resultHandle.getFile();
@@ -2963,9 +3321,18 @@ async function loadDirectoryResult(directory) {
         const savedPage =
             savedPages.get(batchPage.file.name);
 
+        if (!savedPage) {
+
+            return;
+
+        }
+
+        batchPage.kind =
+            normalizePageKind(savedPage.kind);
+
         /* xml のない結果（旧版で書いたもの）は表示できないので読み込まない */
 
-        if (!savedPage || savedPage.error || !savedPage.xml) {
+        if (!withOCR || savedPage.error || !savedPage.xml) {
 
             return;
 
@@ -3103,21 +3470,22 @@ async function selectFolder() {
 
         }
 
-        if (choice === "reuse") {
+        /* 種別は「やり直す」でも残す。結果を読み込むのは「既存の結果を使う」のときだけ */
 
-            for (const directory of withResult) {
+        for (const directory of withResult) {
 
-                try {
+            try {
 
-                    await loadDirectoryResult(directory);
+                await loadDirectoryResult(
+                    directory,
+                    choice === "reuse"
+                );
 
-                } catch (error) {
+            } catch (error) {
 
-                    showError(
-                        `${directory.path} の結果を読めませんでした: ${error.message}`
-                    );
-
-                }
+                showError(
+                    `${directory.path} の結果・種別を読めませんでした: ${error.message}`
+                );
 
             }
 
@@ -3151,7 +3519,7 @@ async function selectFolder() {
 
 /*
  * ディレクトリの直下に書く結果。
- * ページごとに OCR結果（表示用の xml と、src/ocr.py の JSON と同じ contents / imginfo）か、
+ * ページごとに種別と、OCR結果（表示用の xml と、src/ocr.py の JSON と同じ contents / imginfo）か、
  * エラーを入れる。xml は「既存の結果を使う」で表示と検索に使う
  */
 
@@ -3160,8 +3528,8 @@ async function saveDirectoryResult(directory) {
     const result = {
         pages: directory.pages.map(batchPage =>
             batchPage.status === "done"
-                ? { name: batchPage.file.name, xml: batchPage.xml, ...batchPage.json }
-                : { name: batchPage.file.name, error: batchPage.error }
+                ? { name: batchPage.file.name, kind: batchPage.kind, xml: batchPage.xml, ...batchPage.json }
+                : { name: batchPage.file.name, kind: batchPage.kind, error: batchPage.error }
         )
     };
 
@@ -3183,6 +3551,18 @@ async function saveDirectoryResult(directory) {
 }
 
 
+/* ディレクトリ配下のページがすべて終わった（成功か失敗）かどうか */
+
+function isDirectoryFinished(directory) {
+
+    return directory.pages.every(batchPage =>
+        batchPage.status === "done"
+        || batchPage.status === "error"
+    );
+
+}
+
+
 /*
  * 配下のページがすべて終わったディレクトリから順に結果を書く
  */
@@ -3191,13 +3571,7 @@ async function saveCompletedDirectories() {
 
     for (const directory of batchDirectories) {
 
-        const finished =
-            directory.pages.every(batchPage =>
-                batchPage.status === "done"
-                || batchPage.status === "error"
-            );
-
-        if (directory.saved || !finished) {
+        if (directory.saved || !isDirectoryFinished(directory)) {
 
             continue;
 
@@ -3234,6 +3608,63 @@ extensionCandidates.replaceChildren(
         option.value = extension;
 
         return option;
+
+    })
+);
+
+searchKinds.replaceChildren(
+    ...Object.entries(PAGE_KIND_LABELS).map(([kind, label]) => {
+
+        const checkbox =
+            document.createElement("input");
+
+        checkbox.type = "checkbox";
+
+        checkbox.value = kind;
+
+        /* 最初はすべての種別を検索する */
+
+        checkbox.checked = true;
+
+        const item =
+            document.createElement("label");
+
+        item.append(checkbox, label);
+
+        return item;
+
+    })
+);
+
+kindOverlay.replaceChildren(
+    ...Object.entries(PAGE_KIND_LABELS).map(([kind, label]) => {
+
+        const button =
+            document.createElement("button");
+
+        button.type = "button";
+
+        button.textContent = label;
+
+        button.dataset.kind = kind;
+
+        button.addEventListener(
+            "click",
+            () => {
+
+                const batchPage =
+                    batchPages[currentPageIndex];
+
+                if (batchPage && batchPage.kind !== kind) {
+
+                    changePageKind(batchPage, kind);
+
+                }
+
+            }
+        );
+
+        return button;
 
     })
 );
@@ -3424,7 +3855,17 @@ function makeHit(pageIndex, searchData, start, end) {
 }
 
 
-function searchBatchPages(query) {
+/* チェックが付いている種別 */
+
+function selectedSearchKinds() {
+
+    return [...searchKinds.querySelectorAll("input:checked")]
+        .map(checkbox => checkbox.value);
+
+}
+
+
+function searchBatchPages(query, kinds) {
 
     const needle =
         normalizeForSearch(query).key;
@@ -3439,6 +3880,12 @@ function searchBatchPages(query) {
     batchPages.forEach((batchPage, pageIndex) => {
 
         if (!batchPage.searchData) {
+            return;
+        }
+
+        /* 種別で絞る。選ばれている種別のページだけを検索する */
+
+        if (!kinds.includes(batchPage.kind)) {
             return;
         }
 
@@ -3541,13 +3988,16 @@ function renderSearchResults(hits) {
         item.className = "listItem";
 
 
+        const batchPage =
+            batchPages[hit.pageIndex];
+
         const name =
             document.createElement("div");
 
         name.className = "listName";
 
         name.textContent =
-            batchPages[hit.pageIndex].name;
+            `${batchPage.name}（${PAGE_KIND_LABELS[batchPage.kind]}）`;
 
 
         const text =
@@ -3613,6 +4063,20 @@ function runSearch() {
     }
 
 
+    const kinds =
+        selectedSearchKinds();
+
+    if (kinds.length === 0) {
+
+        searchInfo.textContent =
+            "検索する種別を1つ以上選んでください";
+
+        searchResults.innerHTML = "";
+
+        return;
+    }
+
+
     if (countSearchablePages() === 0) {
 
         searchInfo.textContent =
@@ -3625,7 +4089,7 @@ function runSearch() {
 
 
     const hits =
-        searchBatchPages(query);
+        searchBatchPages(query, kinds);
 
     const pageCount =
         new Set(
