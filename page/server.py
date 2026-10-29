@@ -32,7 +32,9 @@ import ocr  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "tif", "tiff", "jp2", "bmp"}
+# 受け付ける拡張子。src/ocr.py の process() が読める形式に合わせる。
+# どれを処理するかはページの設定（対象の拡張子）で選ぶ
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "tif", "tiff", "jp2", "bmp", "webp"}
 
 # /api/ocr/batch で一度に受け付ける最大枚数
 BATCH_MAX_FILES = 50

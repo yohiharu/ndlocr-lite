@@ -170,6 +170,76 @@ label.button:hover {
     padding: 10px;
 }
 
+.extensionSettings {
+    padding: 0 10px 8px;
+
+    color: #aaa;
+
+    font-size: 12px;
+}
+
+#extensionChips {
+    display: flex;
+    flex-wrap: wrap;
+
+    gap: 6px;
+
+    margin-top: 6px;
+}
+
+.extensionChip {
+    display: inline-flex;
+    align-items: center;
+
+    gap: 4px;
+
+    padding: 2px 4px 2px 8px;
+
+    border: 1px solid #666;
+    border-radius: 12px;
+
+    background: #2a2a2a;
+
+    color: #ddd;
+}
+
+.extensionChip button {
+    padding: 0 6px;
+
+    border-radius: 10px;
+
+    font-size: 12px;
+
+    line-height: 1.5;
+}
+
+.extensionForm {
+    display: flex;
+
+    gap: 6px;
+
+    margin-top: 8px;
+}
+
+#extensionInput {
+    flex: 1;
+
+    min-width: 0;
+
+    max-width: 160px;
+
+    padding: 4px 6px;
+
+    border: 1px solid #666;
+    border-radius: 4px;
+
+    background: #0c0c0c;
+
+    color: white;
+
+    font-size: 12px;
+}
+
 dialog {
     width: min(420px, calc(100vw - 32px));
 
@@ -783,6 +853,35 @@ dialog::backdrop {
                 <button id="stopButton" disabled>
                     停止
                 </button>
+
+            </div>
+
+
+            <div class="extensionSettings">
+
+                <div>
+                    対象の拡張子（次にフォルダを選択したときから反映）
+                </div>
+
+                <div id="extensionChips"></div>
+
+                <form id="extensionForm" class="extensionForm">
+
+                    <input
+                        id="extensionInput"
+                        list="extensionCandidates"
+                        placeholder="例: png"
+                        autocomplete="off"
+                        spellcheck="false"
+                    >
+
+                    <button type="submit">
+                        追加
+                    </button>
+
+                </form>
+
+                <datalist id="extensionCandidates"></datalist>
 
             </div>
 
@@ -1831,7 +1930,18 @@ const BATCH_MAX_FILES = 10;
 
 const BATCH_MAX_BYTES = 80 * 1024 * 1024;
 
-const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "tif", "tiff", "jp2", "bmp"];
+/*
+ * 一括OCRの対象にする拡張子。画面で追加・削除し、このブラウザに保存する。
+ * SUPPORTED_EXTENSIONS は page/server.py の ALLOWED_EXTENSIONS と同じにする
+ */
+
+const SUPPORTED_EXTENSIONS = ["jpg", "jpeg", "png", "tif", "tiff", "jp2", "bmp", "webp"];
+
+const DEFAULT_EXTENSIONS = ["jpg"];
+
+const EXTENSIONS_KEY = "ocrViewer.imageExtensions";
+
+let imageExtensions = loadImageExtensions();
 
 /* 結果は、画像があるディレクトリの直下にこの名前で書く */
 
@@ -1846,6 +1956,18 @@ const STATUS_LABELS = {
 
 const folderButton =
     document.getElementById("folderButton");
+
+const extensionChips =
+    document.getElementById("extensionChips");
+
+const extensionForm =
+    document.getElementById("extensionForm");
+
+const extensionInput =
+    document.getElementById("extensionInput");
+
+const extensionCandidates =
+    document.getElementById("extensionCandidates");
 
 const reuseDialog =
     document.getElementById("reuseDialog");
@@ -1905,6 +2027,166 @@ let stopRequested = false;
 const collapsedFolders = new Set();
 
 
+function loadImageExtensions() {
+
+    try {
+
+        const saved =
+            JSON.parse(
+                localStorage.getItem(EXTENSIONS_KEY)
+            );
+
+        if (Array.isArray(saved)) {
+
+            const valid =
+                saved.filter(extension =>
+                    SUPPORTED_EXTENSIONS.includes(extension)
+                );
+
+            if (valid.length > 0) {
+                return valid;
+            }
+
+        }
+
+    } catch (error) {
+
+        /* 保存を読めないときは既定の一覧を使う */
+
+    }
+
+    return [...DEFAULT_EXTENSIONS];
+
+}
+
+
+function saveImageExtensions() {
+
+    try {
+
+        localStorage.setItem(
+            EXTENSIONS_KEY,
+            JSON.stringify(imageExtensions)
+        );
+
+    } catch (error) {
+
+        /* 保存できなくても、このページを開いているあいだは選んだ拡張子で動く */
+
+    }
+
+}
+
+
+function renderExtensionChips() {
+
+    extensionChips.replaceChildren(
+        ...imageExtensions.map(extension => {
+
+            const chip =
+                document.createElement("span");
+
+            chip.className = "extensionChip";
+
+            const remove =
+                document.createElement("button");
+
+            remove.type = "button";
+            remove.textContent = "×";
+            remove.title = `${extension} を外す`;
+
+            remove.addEventListener(
+                "click",
+                () => removeImageExtension(extension)
+            );
+
+            chip.append(extension, remove);
+
+            return chip;
+
+        })
+    );
+
+}
+
+
+function normalizeExtension(text) {
+
+    /* 「.PNG」「png」のどちらで入力されても同じ扱いにする */
+
+    return text
+        .trim()
+        .replace(/^\.+/, "")
+        .toLowerCase();
+
+}
+
+
+function addImageExtension(text) {
+
+    const extension =
+        normalizeExtension(text);
+
+    if (extension === "") {
+
+        showError(
+            "拡張子を入力してください"
+        );
+
+        return;
+
+    }
+
+    if (!SUPPORTED_EXTENSIONS.includes(extension)) {
+
+        showError(
+            `${extension} は対象にできません（使えるもの: ${SUPPORTED_EXTENSIONS.join(", ")}）`
+        );
+
+        return;
+
+    }
+
+    if (!imageExtensions.includes(extension)) {
+
+        imageExtensions = [...imageExtensions, extension];
+
+        saveImageExtensions();
+
+        renderExtensionChips();
+
+    }
+
+    extensionInput.value = "";
+
+}
+
+
+function removeImageExtension(extension) {
+
+    /* 1つも残らないと対象が空になるので、最後の1つは外せないようにする */
+
+    if (imageExtensions.length === 1) {
+
+        showError(
+            "対象の拡張子は1つ以上必要です"
+        );
+
+        return;
+
+    }
+
+    imageExtensions = imageExtensions.filter(item =>
+        item !== extension
+    );
+
+    saveImageExtensions();
+
+    renderExtensionChips();
+
+}
+
+
 function isImageName(name) {
 
     const dot =
@@ -1914,7 +2196,7 @@ function isImageName(name) {
         return false;
     }
 
-    return IMAGE_EXTENSIONS.includes(
+    return imageExtensions.includes(
         name.slice(dot + 1).toLowerCase()
     );
 
@@ -2939,6 +3221,33 @@ async function saveCompletedDirectories() {
     }
 
 }
+
+
+renderExtensionChips();
+
+extensionCandidates.replaceChildren(
+    ...SUPPORTED_EXTENSIONS.map(extension => {
+
+        const option =
+            document.createElement("option");
+
+        option.value = extension;
+
+        return option;
+
+    })
+);
+
+extensionForm.addEventListener(
+    "submit",
+    event => {
+
+        event.preventDefault();
+
+        addImageExtension(extensionInput.value);
+
+    }
+);
 
 
 folderButton.addEventListener(
