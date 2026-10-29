@@ -118,14 +118,153 @@ label.button:hover {
     border-right: 1px solid #444;
 }
 
-#inputPanel h3 {
-    margin: 0;
+[hidden] {
+    display: none !important;
+}
 
-    padding: 10px 12px;
+#tabs {
+    display: flex;
+
+    flex-shrink: 0;
+
+    border-bottom: 1px solid #444;
+}
+
+.tab {
+    flex: 1;
+
+    padding: 10px 0;
+
+    border: 0;
+    border-radius: 0;
+
+    background: #181818;
+
+    color: #aaa;
+}
+
+.tab.active {
+    background: #222;
 
     color: white;
 
+    box-shadow: inset 0 -2px 0 #1677ff;
+}
+
+.tabPanel {
+    flex: 1;
+
+    min-height: 0;
+
+    display: flex;
+    flex-direction: column;
+}
+
+.tabActions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+
+    gap: 8px;
+
+    padding: 10px;
+}
+
+#folderInput {
+    display: none;
+}
+
+#searchInput {
+    flex: 1;
+
+    min-width: 0;
+
+    padding: 6px 8px;
+
+    border: 1px solid #666;
+    border-radius: 4px;
+
+    background: #0c0c0c;
+
+    color: white;
+
+    font-size: 13px;
+}
+
+.tabInfo {
+    padding: 0 10px 8px;
+
+    color: #aaa;
+
+    font-size: 12px;
+}
+
+#pageList,
+#searchResults {
+    flex: 1;
+
+    margin: 0;
+    padding: 0;
+
+    overflow-y: auto;
+
+    list-style: none;
+}
+
+.listItem {
+    padding: 8px 10px;
+
+    border-bottom: 1px solid #2a2a2a;
+
+    color: #ddd;
+
+    font-size: 12px;
+
+    cursor: pointer;
+}
+
+.listItem:hover {
+    background: #2a2a2a;
+}
+
+.listItem.current {
+    background: #1f3b5c;
+}
+
+.listName {
+    color: #8ab4ff;
+
+    word-break: break-all;
+}
+
+.listText {
+    margin-top: 2px;
+
     font-size: 14px;
+
+    word-break: break-all;
+}
+
+.listText mark {
+    background: #ffd54f;
+
+    color: #111;
+}
+
+.pageStatus.pending {
+    color: #888;
+}
+
+.pageStatus.running {
+    color: #ffd166;
+}
+
+.pageStatus.done {
+    color: #7fd17f;
+}
+
+.pageStatus.error {
+    color: #ff8a8a;
 }
 
 #xmlInput {
@@ -511,10 +650,26 @@ label.button:hover {
 
     <section id="inputPanel">
 
-        <h3>
-            OCR XML
-        </h3>
+        <nav id="tabs">
 
+            <button class="tab active" data-tab="xmlTab">
+                XML
+            </button>
+
+            <button class="tab" data-tab="pagesTab">
+                ページ
+            </button>
+
+            <button class="tab" data-tab="searchTab">
+                検索
+            </button>
+
+        </nav>
+
+
+        <!-- XML -->
+
+        <div id="xmlTab" class="tabPanel">
 
         <textarea
             id="xmlInput"
@@ -526,6 +681,80 @@ label.button:hover {
         <button id="parseButton">
             XMLを表示
         </button>
+
+        </div>
+
+
+        <!-- ページ（フォルダの一括OCR） -->
+
+        <div id="pagesTab" class="tabPanel" hidden>
+
+            <div class="tabActions">
+
+                <label class="button">
+
+                    フォルダを選択
+
+                    <input
+                        id="folderInput"
+                        type="file"
+                        webkitdirectory
+                        multiple
+                    >
+
+                </label>
+
+
+                <button id="batchButton" disabled>
+                    一括OCR実行
+                </button>
+
+
+                <button id="stopButton" disabled>
+                    停止
+                </button>
+
+            </div>
+
+
+            <div id="batchProgress" class="tabInfo">
+                フォルダを選択してください
+            </div>
+
+
+            <ul id="pageList"></ul>
+
+        </div>
+
+
+        <!-- 検索 -->
+
+        <div id="searchTab" class="tabPanel" hidden>
+
+            <div class="tabActions">
+
+                <input
+                    id="searchInput"
+                    type="search"
+                    placeholder="単語・語句・字句"
+                >
+
+
+                <button id="searchButton">
+                    検索
+                </button>
+
+            </div>
+
+
+            <div id="searchInfo" class="tabInfo">
+                一括OCRの完了後に検索できます
+            </div>
+
+
+            <ul id="searchResults"></ul>
+
+        </div>
 
     </section>
 
@@ -901,6 +1130,7 @@ function parseXML() {
         element.dataset.height = h;
         element.dataset.conf = conf;
         element.dataset.order = order;
+        element.dataset.index = index;
 
 
         /*
@@ -1442,6 +1672,999 @@ xmlInput.addEventListener(
 
     }
 );
+
+
+/* ==================================================
+   タブ切替
+================================================== */
+
+document
+    .querySelectorAll(".tab")
+    .forEach(tab => {
+
+        tab.addEventListener(
+            "click",
+            () => {
+
+                document
+                    .querySelectorAll(".tab")
+                    .forEach(el => {
+
+                        el.classList.toggle(
+                            "active",
+                            el === tab
+                        );
+
+                    });
+
+
+                document
+                    .querySelectorAll(".tabPanel")
+                    .forEach(panel => {
+
+                        panel.hidden =
+                            panel.id !== tab.dataset.tab;
+
+                    });
+
+            }
+        );
+
+    });
+
+
+/* ==================================================
+   フォルダ一括OCR
+================================================== */
+
+/*
+ * 1回の送信で渡す枚数とサイズ。
+ * サーバーの上限（最大50枚、リクエスト100MB）より小さく取る。
+ */
+
+const BATCH_MAX_FILES = 10;
+
+const BATCH_MAX_BYTES = 80 * 1024 * 1024;
+
+const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "tif", "tiff", "jp2", "bmp"];
+
+const STATUS_LABELS = {
+    pending: "未処理",
+    running: "処理中",
+    done: "完了",
+    error: "失敗"
+};
+
+const folderInput =
+    document.getElementById("folderInput");
+
+const batchButton =
+    document.getElementById("batchButton");
+
+const stopButton =
+    document.getElementById("stopButton");
+
+const batchProgress =
+    document.getElementById("batchProgress");
+
+const pageList =
+    document.getElementById("pageList");
+
+const searchInput =
+    document.getElementById("searchInput");
+
+const searchButton =
+    document.getElementById("searchButton");
+
+const searchInfo =
+    document.getElementById("searchInfo");
+
+const searchResults =
+    document.getElementById("searchResults");
+
+
+/*
+ * フォルダ内の画像。
+ * { file, name, status, error, xml, searchData }
+ */
+
+let batchPages = [];
+
+let currentPageIndex = -1;
+
+let batchRunning = false;
+
+let stopRequested = false;
+
+
+function isImageName(name) {
+
+    const dot =
+        name.lastIndexOf(".");
+
+    if (dot < 0) {
+        return false;
+    }
+
+    return IMAGE_EXTENSIONS.includes(
+        name.slice(dot + 1).toLowerCase()
+    );
+
+}
+
+
+function countBatchPages(status) {
+
+    return batchPages.filter(batchPage =>
+        batchPage.status === status
+    ).length;
+
+}
+
+
+function updateBatchControls() {
+
+    batchButton.disabled =
+        batchRunning
+        || batchPages.length === 0;
+
+    stopButton.disabled =
+        !batchRunning;
+
+}
+
+
+function updateBatchProgress() {
+
+    const done =
+        countBatchPages("done");
+
+    const failed =
+        countBatchPages("error");
+
+    const summary =
+        batchPages.length === 0
+            ? "フォルダを選択してください"
+            : `完了 ${done} / ${batchPages.length} 件（失敗 ${failed} 件）`;
+
+
+    if (!batchRunning) {
+
+        batchProgress.textContent =
+            summary;
+
+        return;
+    }
+
+
+    batchProgress.textContent =
+        (stopRequested ? "停止中… " : "処理中… ")
+        + summary;
+
+
+    /* ツールバーには、ページを表示していなくても進捗が見えるように出す */
+
+    status.textContent =
+        `一括OCR ${done} / ${batchPages.length}`;
+
+}
+
+
+function renderPageList() {
+
+    pageList.innerHTML = "";
+
+
+    batchPages.forEach((batchPage, index) => {
+
+        const item =
+            document.createElement("li");
+
+        item.className = "listItem";
+
+        item.classList.toggle(
+            "current",
+            index === currentPageIndex
+        );
+
+
+        const name =
+            document.createElement("div");
+
+        name.className = "listName";
+
+        name.textContent =
+            batchPage.name;
+
+
+        const state =
+            document.createElement("div");
+
+        state.className =
+            `pageStatus ${batchPage.status}`;
+
+        state.textContent =
+            batchPage.status === "error"
+                ? `失敗: ${batchPage.error}`
+                : STATUS_LABELS[batchPage.status];
+
+
+        item.append(name, state);
+
+        item.addEventListener(
+            "click",
+            () => showPage(index)
+        );
+
+        pageList.appendChild(item);
+
+    });
+
+}
+
+
+/*
+ * 件数に応じて、送信単位（配列）に分ける
+ */
+
+function makeBatches(targets) {
+
+    const batches = [];
+
+    let current = [];
+
+    let bytes = 0;
+
+
+    targets.forEach(batchPage => {
+
+        const isFull =
+            current.length >= BATCH_MAX_FILES
+            || bytes + batchPage.file.size > BATCH_MAX_BYTES;
+
+        if (current.length > 0 && isFull) {
+
+            batches.push(current);
+
+            current = [];
+
+            bytes = 0;
+
+        }
+
+
+        current.push(batchPage);
+
+        bytes += batchPage.file.size;
+
+    });
+
+
+    if (current.length > 0) {
+
+        batches.push(current);
+
+    }
+
+
+    return batches;
+
+}
+
+
+async function requestBatchOCR(batch) {
+
+    const formData =
+        new FormData();
+
+    batch.forEach(batchPage => {
+
+        formData.append(
+            "images",
+            batchPage.file
+        );
+
+    });
+
+
+    let response;
+
+    try {
+
+        response =
+            await fetch(
+                "api/ocr/batch",
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+
+    } catch (error) {
+
+        throw new Error(
+            "OCRサーバーに接続できません。page/server.py を起動し、http://127.0.0.1:5000 から開いてください"
+        );
+
+    }
+
+
+    if (!response.ok) {
+
+        const body =
+            await response.json()
+                .catch(() => ({}));
+
+        throw new Error(
+            body.error
+            || `OCRに失敗しました (${response.status})`
+        );
+
+    }
+
+
+    const body =
+        await response.json();
+
+
+    body.results.forEach(result => {
+
+        const batchPage =
+            batch[result.index];
+
+        if (result.error) {
+
+            batchPage.status = "error";
+            batchPage.error = result.error;
+
+            return;
+        }
+
+        batchPage.xml = result.xml;
+        batchPage.searchData = buildSearchData(result.xml);
+        batchPage.status = "done";
+
+    });
+
+
+    /* 結果が返ってこなかったページは失敗にする */
+
+    batch.forEach(batchPage => {
+
+        if (batchPage.status === "running") {
+
+            batchPage.status = "error";
+            batchPage.error = "OCR結果がありません";
+
+        }
+
+    });
+
+}
+
+
+async function runBatchOCR() {
+
+    batchRunning = true;
+
+    stopRequested = false;
+
+    updateBatchControls();
+
+    updateBatchProgress();
+
+
+    /* 未処理と失敗したページを対象にする（停止後の再実行で続きから処理できる） */
+
+    const targets =
+        batchPages.filter(batchPage =>
+            batchPage.status !== "done"
+        );
+
+
+    for (const batch of makeBatches(targets)) {
+
+        if (stopRequested) {
+            break;
+        }
+
+
+        batch.forEach(batchPage => {
+
+            batchPage.status = "running";
+
+        });
+
+        renderPageList();
+
+
+        try {
+
+            await requestBatchOCR(batch);
+
+        } catch (error) {
+
+            batch.forEach(batchPage => {
+
+                batchPage.status = "error";
+                batchPage.error = error.message;
+
+            });
+
+            showError(error.message);
+
+        }
+
+
+        renderPageList();
+
+        updateBatchProgress();
+
+
+        /* 表示中のページがこの送信で完了したら、結果を表示する */
+
+        const current =
+            batchPages[currentPageIndex];
+
+        if (
+            current
+            && current.status === "done"
+            && batch.includes(current)
+        ) {
+
+            showPage(currentPageIndex);
+
+        }
+
+    }
+
+
+    batchRunning = false;
+
+    updateBatchControls();
+
+    updateBatchProgress();
+
+}
+
+
+function showPage(index) {
+
+    const batchPage =
+        batchPages[index];
+
+    currentPageIndex = index;
+
+
+    /* 画像。ブラウザで表示できない形式なら画像は出さない（OCR実行もできない） */
+
+    imageFile = null;
+
+    ocrButton.disabled = true;
+
+    backgroundImage.classList.remove(
+        "visible"
+    );
+
+    if (batchPage.file.type.startsWith("image/")) {
+
+        loadImage(batchPage.file);
+
+    }
+
+
+    /* OCR結果。未処理のページは結果がないので、画像だけ表示する */
+
+    if (batchPage.xml) {
+
+        xmlInput.value = batchPage.xml;
+
+        parseXML();
+
+    } else {
+
+        ocrLayer.innerHTML = "";
+
+        const state =
+            batchPage.status === "error"
+                ? batchPage.error
+                : STATUS_LABELS[batchPage.status];
+
+        status.textContent =
+            `${batchPage.name} / ${state}`;
+
+    }
+
+
+    renderPageList();
+
+}
+
+
+folderInput.addEventListener(
+    "change",
+    event => {
+
+        if (batchRunning) {
+
+            showError(
+                "一括OCRの完了後にフォルダを選択してください"
+            );
+
+            event.target.value = "";
+
+            return;
+        }
+
+
+        const files =
+            [...event.target.files]
+                .filter(file =>
+                    isImageName(file.name)
+                );
+
+        event.target.value = "";
+
+
+        if (files.length === 0) {
+
+            showError(
+                "フォルダに画像ファイルがありません"
+            );
+
+            return;
+        }
+
+
+        /* ファイル名の数字は自然順（2 < 10）に並べる */
+
+        files.sort(
+            (a, b) =>
+                (a.webkitRelativePath || a.name).localeCompare(
+                    b.webkitRelativePath || b.name,
+                    undefined,
+                    { numeric: true }
+                )
+        );
+
+
+        batchPages = files.map(file => ({
+            file,
+            name: file.webkitRelativePath || file.name,
+            status: "pending",
+            error: "",
+            xml: "",
+            searchData: null
+        }));
+
+        currentPageIndex = -1;
+
+        searchResults.innerHTML = "";
+
+        searchInfo.textContent =
+            "一括OCRの完了後に検索できます";
+
+
+        renderPageList();
+
+        updateBatchControls();
+
+        updateBatchProgress();
+
+    }
+);
+
+
+batchButton.addEventListener(
+    "click",
+    runBatchOCR
+);
+
+
+stopButton.addEventListener(
+    "click",
+    () => {
+
+        stopRequested = true;
+
+        updateBatchProgress();
+
+    }
+);
+
+
+/* ==================================================
+   検索（全角・半角、大文字・小文字、空白の違いを無視）
+================================================== */
+
+const SEARCH_RESULT_LIMIT = 500;
+
+
+function normalizeForSearch(text) {
+
+    /*
+     * key: 検索用の文字列（NFKC・小文字・空白なし）
+     * origin: key の各文字が text の何文字目（コードポイント）か
+     */
+
+    let key = "";
+
+    const origin = [];
+
+
+    [...text].forEach((char, index) => {
+
+        const normalized =
+            char.normalize("NFKC")
+                .toLowerCase();
+
+        if (/\s/.test(normalized)) {
+            return;
+        }
+
+        key += normalized;
+
+        for (let i = 0; i < normalized.length; i++) {
+
+            origin.push(index);
+
+        }
+
+    });
+
+
+    return { key, origin };
+
+}
+
+
+function buildSearchData(source) {
+
+    const xml =
+        new DOMParser()
+            .parseFromString(
+                source,
+                "application/xml"
+            );
+
+
+    /* 読み順（ORDER）に並べる。ORDER が無い行は最後 */
+
+    const lines =
+        [...xml.querySelectorAll("LINE")]
+            .map((line, index) => {
+
+                const order =
+                    parseFloat(
+                        line.getAttribute("ORDER")
+                    );
+
+                return {
+                    index,
+                    text: line.getAttribute("STRING") || "",
+                    order: Number.isNaN(order) ? Infinity : order
+                };
+
+            })
+            .filter(line =>
+                line.text.trim()
+            )
+            .sort((a, b) =>
+                a.order - b.order
+            );
+
+
+    /* 行をつないだ1本の文字列で、各行がどこから始まるかを覚えておく */
+
+    let key = "";
+
+    const searchLines = lines.map(line => {
+
+        const normalized =
+            normalizeForSearch(line.text);
+
+        const searchLine = {
+            index: line.index,
+            chars: [...line.text],
+            origin: normalized.origin,
+            start: key.length,
+            length: normalized.key.length
+        };
+
+        key += normalized.key;
+
+        return searchLine;
+
+    });
+
+
+    return { key, lines: searchLines };
+
+}
+
+
+function makeHit(pageIndex, searchData, start, end) {
+
+    /* 一致した範囲にかかる行。行をまたぐ語句は複数行になる */
+
+    const lines =
+        searchData.lines.filter(line =>
+            start < line.start + line.length
+            && line.start < end
+        );
+
+
+    /* 行ごとに、一致した部分の文字位置（chars の何文字目から何文字目まで）を持つ */
+
+    const segments =
+        lines.map(line => {
+
+            const from =
+                Math.max(start, line.start) - line.start;
+
+            const to =
+                Math.min(end, line.start + line.length) - line.start;
+
+            return {
+                chars: line.chars,
+                startChar: line.origin[from],
+                endChar: line.origin[to - 1] + 1
+            };
+
+        });
+
+
+    return {
+        pageIndex,
+        lineIndexes: lines.map(line => line.index),
+        segments
+    };
+
+}
+
+
+function searchBatchPages(query) {
+
+    const needle =
+        normalizeForSearch(query).key;
+
+    const hits = [];
+
+    if (!needle) {
+        return hits;
+    }
+
+
+    batchPages.forEach((batchPage, pageIndex) => {
+
+        if (!batchPage.searchData) {
+            return;
+        }
+
+        const { key } =
+            batchPage.searchData;
+
+        let start =
+            key.indexOf(needle);
+
+        while (start >= 0) {
+
+            hits.push(
+                makeHit(
+                    pageIndex,
+                    batchPage.searchData,
+                    start,
+                    start + needle.length
+                )
+            );
+
+            start = key.indexOf(
+                needle,
+                start + needle.length
+            );
+
+        }
+
+    });
+
+
+    return hits;
+
+}
+
+
+function showHit(hit) {
+
+    showPage(hit.pageIndex);
+
+
+    let first = null;
+
+    hit.lineIndexes.forEach(index => {
+
+        const element =
+            ocrLayer.querySelector(
+                `.ocr-line[data-index="${index}"]`
+            );
+
+        if (!element) {
+            return;
+        }
+
+        element.classList.add(
+            "selected"
+        );
+
+        first =
+            first || element;
+
+    });
+
+
+    if (first) {
+
+        first.scrollIntoView({
+            block: "center",
+            inline: "center"
+        });
+
+    }
+
+}
+
+
+function renderSearchResults(hits) {
+
+    searchResults.innerHTML = "";
+
+
+    hits.slice(0, SEARCH_RESULT_LIMIT).forEach(hit => {
+
+        const item =
+            document.createElement("li");
+
+        item.className = "listItem";
+
+
+        const name =
+            document.createElement("div");
+
+        name.className = "listName";
+
+        name.textContent =
+            batchPages[hit.pageIndex].name;
+
+
+        const text =
+            document.createElement("div");
+
+        text.className = "listText";
+
+        /* 行をまたぐ語句は、一致した行ごとに改行して表示する */
+
+        hit.segments.forEach((segment, index) => {
+
+            const mark =
+                document.createElement("mark");
+
+            mark.textContent =
+                segment.chars
+                    .slice(segment.startChar, segment.endChar)
+                    .join("");
+
+            if (index > 0) {
+
+                text.append(
+                    document.createElement("br")
+                );
+
+            }
+
+            text.append(
+                segment.chars.slice(0, segment.startChar).join(""),
+                mark,
+                segment.chars.slice(segment.endChar).join("")
+            );
+
+        });
+
+
+        item.append(name, text);
+
+        item.addEventListener(
+            "click",
+            () => showHit(hit)
+        );
+
+        searchResults.appendChild(item);
+
+    });
+
+}
+
+
+function runSearch() {
+
+    const query =
+        searchInput.value.trim();
+
+    if (!query) {
+
+        showError(
+            "検索する文字を入力してください"
+        );
+
+        return;
+    }
+
+
+    if (countSearchablePages() === 0) {
+
+        searchInfo.textContent =
+            "OCR済みのページがありません。一括OCRを実行してください";
+
+        searchResults.innerHTML = "";
+
+        return;
+    }
+
+
+    const hits =
+        searchBatchPages(query);
+
+    const pageCount =
+        new Set(
+            hits.map(hit => hit.pageIndex)
+        ).size;
+
+    searchInfo.textContent =
+        `${hits.length} 件（${pageCount} ページ）`
+        + (
+            hits.length > SEARCH_RESULT_LIMIT
+                ? `、先頭 ${SEARCH_RESULT_LIMIT} 件を表示`
+                : ""
+        );
+
+    renderSearchResults(hits);
+
+}
+
+
+function countSearchablePages() {
+
+    return batchPages.filter(batchPage =>
+        batchPage.searchData
+    ).length;
+
+}
+
+
+searchButton.addEventListener(
+    "click",
+    runSearch
+);
+
+
+searchInput.addEventListener(
+    "keydown",
+    event => {
+
+        /* 変換確定の Enter では検索しない */
+
+        if (
+            event.key === "Enter"
+            && !event.isComposing
+        ) {
+
+            runSearch();
+
+        }
+
+    }
+);
+
+
+updateBatchControls();
 
 
 /* ==================================================
