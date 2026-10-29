@@ -31,7 +31,9 @@ for arg in "$@"; do
     esac
 done
 
-URL="http://$HOST:$PORT"
+# ブラウザで開くURL。フォルダの結果を書き込む機能はセキュアコンテキストが必要なため、
+# 0.0.0.0 ではなく 127.0.0.1 で開く
+URL="http://127.0.0.1:$PORT"
 
 die() {
     echo "[ERROR] $*" >&2

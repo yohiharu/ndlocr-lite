@@ -9,6 +9,7 @@ index.html はこのサーバーから配信される。
     → ブラウザで http://127.0.0.1:5000 を開く
 """
 import argparse
+import json
 import logging
 import os
 import sys
@@ -159,6 +160,7 @@ def apply_exif_orientation(image_path):
 def run_ocr_batch():
     """複数画像を1回の process() でまとめてOCRし、画像ごとの結果を返す。
 
+    結果は画像ごとに xml（表示用）と json（src/ocr.py の出力と同じ形式）を返す。
     モデルの読み込みは process() の呼び出しごとに行われるため、
     1枚ずつ /api/ocr を呼ぶより、まとめて渡したほうが速い。
     読めない画像や形式違いは、その画像だけ error になり、他の画像は処理を続ける。
@@ -215,12 +217,21 @@ def run_ocr_batch():
 
         for index in accepted:
             xml_path = os.path.join(output_dir, f"{index:04d}.xml")
-            if not os.path.isfile(xml_path):
+            json_path = os.path.join(output_dir, f"{index:04d}.json")
+            if not (os.path.isfile(xml_path) and os.path.isfile(json_path)):
                 results.append({"index": index, "error": process_error or "OCR結果が生成されませんでした"})
                 continue
 
             with open(xml_path, encoding="utf-8") as xml_file:
-                results.append({"index": index, "xml": xml_file.read()})
+                xml_text = xml_file.read()
+            with open(json_path, encoding="utf-8") as json_file:
+                page_json = json.load(json_file)
+
+            # 連番にリネームした一時ファイルのパスは返さず、アップロードされた元の名前を入れる
+            imginfo = page_json["imginfo"]
+            imginfo["img_name"] = files[index].filename
+            imginfo.pop("img_path", None)
+            results.append({"index": index, "xml": xml_text, "json": page_json})
 
     results.sort(key=lambda result: result["index"])
     elapsed = time.perf_counter() - start_time

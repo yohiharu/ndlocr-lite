@@ -170,8 +170,35 @@ label.button:hover {
     padding: 10px;
 }
 
-#folderInput {
-    display: none;
+dialog {
+    width: min(420px, calc(100vw - 32px));
+
+    padding: 16px 18px;
+
+    border: 1px solid #666;
+    border-radius: 6px;
+
+    background: #111;
+
+    color: white;
+
+    font-size: 13px;
+
+    line-height: 1.7;
+}
+
+dialog::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.dialogActions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+
+    gap: 8px;
+
+    margin-top: 14px;
 }
 
 #searchInput {
@@ -229,6 +256,58 @@ label.button:hover {
 
 .listItem.current {
     background: #1f3b5c;
+}
+
+.folderItem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    padding: 6px 10px;
+
+    border-bottom: 1px solid #2a2a2a;
+
+    background: #1c1c1c;
+
+    color: #ddd;
+
+    font-size: 12px;
+
+    cursor: pointer;
+
+    user-select: none;
+}
+
+.folderItem:hover {
+    background: #2a2a2a;
+}
+
+.folderCaret {
+    flex-shrink: 0;
+
+    width: 12px;
+
+    color: #888;
+}
+
+.folderName {
+    flex: 1;
+
+    min-width: 0;
+
+    font-weight: bold;
+
+    word-break: break-all;
+}
+
+.folderCount {
+    flex-shrink: 0;
+
+    color: #888;
+}
+
+.folderCount.complete {
+    color: #7fd17f;
 }
 
 .listName {
@@ -691,18 +770,9 @@ label.button:hover {
 
             <div class="tabActions">
 
-                <label class="button">
-
+                <button id="folderButton">
                     フォルダを選択
-
-                    <input
-                        id="folderInput"
-                        type="file"
-                        webkitdirectory
-                        multiple
-                    >
-
-                </label>
+                </button>
 
 
                 <button id="batchButton" disabled>
@@ -807,6 +877,41 @@ label.button:hover {
 
 
 <div id="error"></div>
+
+
+<!-- 前回の結果（ocr.json）があるときに、使うかやり直すかを選ぶ -->
+
+<dialog id="reuseDialog">
+
+    <form method="dialog">
+
+        <p id="reuseMessage"></p>
+
+        <p>
+            「既存の結果を使う」は、結果があるページを読み込み、
+            結果がないページ（失敗したものを含む）だけOCRします。<br>
+            「やり直す」は、すべてのページをOCRし直して ocr.json を上書きします。
+        </p>
+
+        <div class="dialogActions">
+
+            <button value="reuse">
+                既存の結果を使う
+            </button>
+
+            <button value="redo">
+                やり直す
+            </button>
+
+            <button value="cancel">
+                キャンセル
+            </button>
+
+        </div>
+
+    </form>
+
+</dialog>
 
 
 <script>
@@ -1728,6 +1833,10 @@ const BATCH_MAX_BYTES = 80 * 1024 * 1024;
 
 const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "tif", "tiff", "jp2", "bmp"];
 
+/* 結果は、画像があるディレクトリの直下にこの名前で書く */
+
+const RESULT_FILE_NAME = "ocr.json";
+
 const STATUS_LABELS = {
     pending: "未処理",
     running: "処理中",
@@ -1735,8 +1844,14 @@ const STATUS_LABELS = {
     error: "失敗"
 };
 
-const folderInput =
-    document.getElementById("folderInput");
+const folderButton =
+    document.getElementById("folderButton");
+
+const reuseDialog =
+    document.getElementById("reuseDialog");
+
+const reuseMessage =
+    document.getElementById("reuseMessage");
 
 const batchButton =
     document.getElementById("batchButton");
@@ -1765,16 +1880,29 @@ const searchResults =
 
 /*
  * フォルダ内の画像。
- * { file, name, status, error, xml, searchData }
+ * { file, name, status, error, xml, json, searchData, directory }
+ *
+ * 画像のあるディレクトリごとの一覧。
+ * { path, handle, resultHandle, pages, saved }
+ * resultHandle は前回の ocr.json（なければ null）、saved は ocr.json の内容が最新かどうか
  */
 
 let batchPages = [];
+
+let batchDirectories = [];
 
 let currentPageIndex = -1;
 
 let batchRunning = false;
 
 let stopRequested = false;
+
+
+/*
+ * ページ一覧で閉じているフォルダ。フォルダのパス（例: 資料/1巻）で管理し、再描画しても残す
+ */
+
+const collapsedFolders = new Set();
 
 
 function isImageName(name) {
@@ -1822,10 +1950,15 @@ function updateBatchProgress() {
     const failed =
         countBatchPages("error");
 
+    const saved =
+        batchDirectories.filter(directory =>
+            directory.saved
+        ).length;
+
     const summary =
         batchPages.length === 0
             ? "フォルダを選択してください"
-            : `完了 ${done} / ${batchPages.length} 件（失敗 ${failed} 件）`;
+            : `完了 ${done} / ${batchPages.length} 件（失敗 ${failed} 件）・結果保存 ${saved} / ${batchDirectories.length} フォルダ`;
 
 
     if (!batchRunning) {
@@ -1850,17 +1983,196 @@ function updateBatchProgress() {
 }
 
 
-function renderPageList() {
+/*
+ * フォルダの階層を作る。画像のないフォルダは、配下に画像があれば中間のフォルダとして出る。
+ * batchPages は読み順（フォルダ内の画像 → 配下のフォルダ）に並んでいるので、
+ * フォルダも見つかった順に並ぶ
+ */
 
-    pageList.innerHTML = "";
+function buildPageTree() {
+
+    const root = {
+        key: "",
+        folders: new Map(),
+        pages: []
+    };
 
 
     batchPages.forEach((batchPage, index) => {
+
+        let node = root;
+
+        batchPage.directory.path
+            .split("/")
+            .forEach(name => {
+
+                if (!node.folders.has(name)) {
+
+                    node.folders.set(
+                        name,
+                        {
+                            key: node.key ? `${node.key}/${name}` : name,
+                            name,
+                            folders: new Map(),
+                            pages: []
+                        }
+                    );
+
+                }
+
+                node = node.folders.get(name);
+
+            });
+
+
+        node.pages.push({
+            index,
+            batchPage
+        });
+
+    });
+
+
+    return root;
+
+}
+
+
+/* フォルダ配下（サブフォルダを含む）のページ数と、完了したページ数 */
+
+function countFolderPages(folder) {
+
+    let total = folder.pages.length;
+
+    let done =
+        folder.pages.filter(({ batchPage }) =>
+            batchPage.status === "done"
+        ).length;
+
+
+    folder.folders.forEach(child => {
+
+        const count =
+            countFolderPages(child);
+
+        total += count.total;
+
+        done += count.done;
+
+    });
+
+
+    return { total, done };
+
+}
+
+
+/* 階層の深さに応じた左の余白（深さ 0 が一番上） */
+
+function indentOf(depth) {
+
+    return `${10 + depth * 16}px`;
+
+}
+
+
+/*
+ * node の中身（サブフォルダ → ページ）を、depth の深さで並べる。
+ * 閉じたフォルダの中は作らない
+ */
+
+function appendFolderContents(node, depth) {
+
+    node.folders.forEach(folder => {
+
+        const collapsed =
+            collapsedFolders.has(folder.key);
+
+        const count =
+            countFolderPages(folder);
+
+
+        const item =
+            document.createElement("li");
+
+        item.className = "folderItem";
+
+        item.style.paddingLeft =
+            indentOf(depth);
+
+
+        const caret =
+            document.createElement("span");
+
+        caret.className = "folderCaret";
+
+        caret.textContent =
+            collapsed ? "▸" : "▾";
+
+
+        const name =
+            document.createElement("span");
+
+        name.className = "folderName";
+
+        name.textContent =
+            folder.name;
+
+
+        const summary =
+            document.createElement("span");
+
+        summary.className =
+            count.done === count.total
+                ? "folderCount complete"
+                : "folderCount";
+
+        summary.textContent =
+            `${count.done} / ${count.total}`;
+
+
+        item.append(caret, name, summary);
+
+        item.addEventListener(
+            "click",
+            () => {
+
+                if (collapsedFolders.has(folder.key)) {
+
+                    collapsedFolders.delete(folder.key);
+
+                } else {
+
+                    collapsedFolders.add(folder.key);
+
+                }
+
+                renderPageList();
+
+            }
+        );
+
+        pageList.appendChild(item);
+
+
+        if (!collapsed) {
+
+            appendFolderContents(folder, depth + 1);
+
+        }
+
+    });
+
+
+    node.pages.forEach(({ index, batchPage }) => {
 
         const item =
             document.createElement("li");
 
         item.className = "listItem";
+
+        item.style.paddingLeft =
+            indentOf(depth);
 
         item.classList.toggle(
             "current",
@@ -1874,7 +2186,7 @@ function renderPageList() {
         name.className = "listName";
 
         name.textContent =
-            batchPage.name;
+            batchPage.file.name;
 
 
         const state =
@@ -1899,6 +2211,23 @@ function renderPageList() {
         pageList.appendChild(item);
 
     });
+
+}
+
+
+/*
+ * ページ一覧は、フォルダの階層どおりに表示する
+ */
+
+function renderPageList() {
+
+    pageList.innerHTML = "";
+
+
+    appendFolderContents(
+        buildPageTree(),
+        0
+    );
 
 }
 
@@ -2021,6 +2350,7 @@ async function requestBatchOCR(batch) {
         }
 
         batchPage.xml = result.xml;
+        batchPage.json = result.json;
         batchPage.searchData = buildSearchData(result.xml);
         batchPage.status = "done";
 
@@ -2073,6 +2403,10 @@ async function runBatchOCR() {
 
             batchPage.status = "running";
 
+            /* 再実行で結果が変わるので、そのディレクトリの結果は書き直す */
+
+            batchPage.directory.saved = false;
+
         });
 
         renderPageList();
@@ -2101,6 +2435,13 @@ async function runBatchOCR() {
         updateBatchProgress();
 
 
+        /* ディレクトリ配下のページがすべて終わったら、その直下に結果を書く */
+
+        await saveCompletedDirectories();
+
+        updateBatchProgress();
+
+
         /* 表示中のページがこの送信で完了したら、結果を表示する */
 
         const current =
@@ -2117,6 +2458,11 @@ async function runBatchOCR() {
         }
 
     }
+
+
+    /* 停止や失敗で残ったディレクトリも、配下が終わっていれば書く */
+
+    await saveCompletedDirectories();
 
 
     batchRunning = false;
@@ -2181,77 +2527,423 @@ function showPage(index) {
 }
 
 
-folderInput.addEventListener(
-    "change",
-    event => {
+/*
+ * ファイル名の数字は自然順（2 < 10）に並べる
+ */
 
-        if (batchRunning) {
+function compareNames(a, b) {
 
-            showError(
-                "一括OCRの完了後にフォルダを選択してください"
-            );
+    return a.name.localeCompare(
+        b.name,
+        undefined,
+        { numeric: true }
+    );
 
-            event.target.value = "";
+}
 
-            return;
+
+/*
+ * ディレクトリ内の画像と、配下のディレクトリを再帰的に読む。
+ * 画像のあるディレクトリは scan.directories に入れる（そのディレクトリ直下に結果を書くため）
+ */
+
+async function scanDirectory(dirHandle, path, scan) {
+
+    const fileHandles = [];
+
+    const subdirHandles = [];
+
+    let resultHandle = null;
+
+    for await (const entry of dirHandle.values()) {
+
+        /* 隠しファイル・隠しフォルダ（.DS_Store など）は対象にしない */
+
+        if (entry.name.startsWith(".")) {
+
+            continue;
+
         }
 
+        if (entry.kind === "directory") {
 
-        const files =
-            [...event.target.files]
-                .filter(file =>
-                    isImageName(file.name)
-                );
+            subdirHandles.push(entry);
 
-        event.target.value = "";
+        } else if (entry.name === RESULT_FILE_NAME) {
 
+            resultHandle = entry;
 
-        if (files.length === 0) {
+        } else if (isImageName(entry.name)) {
 
-            showError(
-                "フォルダに画像ファイルがありません"
-            );
+            fileHandles.push(entry);
 
-            return;
         }
 
+    }
 
-        /* ファイル名の数字は自然順（2 < 10）に並べる */
 
-        files.sort(
-            (a, b) =>
-                (a.webkitRelativePath || a.name).localeCompare(
-                    b.webkitRelativePath || b.name,
-                    undefined,
-                    { numeric: true }
-                )
+    fileHandles.sort(compareNames);
+
+    subdirHandles.sort(compareNames);
+
+
+    if (fileHandles.length > 0) {
+
+        const directory = {
+            path,
+            handle: dirHandle,
+            resultHandle,
+            pages: [],
+            saved: false
+        };
+
+        for (const fileHandle of fileHandles) {
+
+            const batchPage = {
+                file: await fileHandle.getFile(),
+                name: `${path}/${fileHandle.name}`,
+                status: "pending",
+                error: "",
+                xml: "",
+                json: null,
+                searchData: null,
+                directory
+            };
+
+            directory.pages.push(batchPage);
+
+            scan.pages.push(batchPage);
+
+        }
+
+        scan.directories.push(directory);
+
+    }
+
+
+    for (const subdirHandle of subdirHandles) {
+
+        await scanDirectory(
+            subdirHandle,
+            `${path}/${subdirHandle.name}`,
+            scan
         );
 
+    }
 
-        batchPages = files.map(file => ({
-            file,
-            name: file.webkitRelativePath || file.name,
-            status: "pending",
-            error: "",
-            xml: "",
-            searchData: null
-        }));
-
-        currentPageIndex = -1;
-
-        searchResults.innerHTML = "";
-
-        searchInfo.textContent =
-            "一括OCRの完了後に検索できます";
+}
 
 
-        renderPageList();
+/*
+ * 前回の結果があることを伝え、使うか・やり直すか・キャンセルかを選んでもらう。
+ * 戻り値は "reuse" / "redo" / "cancel"（Esc で閉じた場合も "cancel"）
+ */
 
-        updateBatchControls();
+function askReuseChoice(count) {
+
+    reuseMessage.textContent =
+        `${count} 件のフォルダに、前回のOCR結果（${RESULT_FILE_NAME}）があります。`;
+
+    return new Promise(resolve => {
+
+        reuseDialog.addEventListener(
+            "close",
+            () => resolve(reuseDialog.returnValue),
+            { once: true }
+        );
+
+        reuseDialog.showModal();
+
+    });
+
+}
+
+
+/*
+ * 既存の ocr.json を読み、結果のあるページは OCR せずに済むように結果を戻す。
+ * 結果がないページ（失敗したものを含む）は未処理のままにし、実行時に OCR する
+ */
+
+async function loadDirectoryResult(directory) {
+
+    const file =
+        await directory.resultHandle.getFile();
+
+    const result =
+        JSON.parse(await file.text());
+
+    const savedPages = new Map(
+        result.pages.map(savedPage => [savedPage.name, savedPage])
+    );
+
+    directory.pages.forEach(batchPage => {
+
+        const savedPage =
+            savedPages.get(batchPage.file.name);
+
+        /* xml のない結果（旧版で書いたもの）は表示できないので読み込まない */
+
+        if (!savedPage || savedPage.error || !savedPage.xml) {
+
+            return;
+
+        }
+
+        batchPage.xml = savedPage.xml;
+        batchPage.json = {
+            contents: savedPage.contents,
+            imginfo: savedPage.imginfo
+        };
+        batchPage.searchData = buildSearchData(savedPage.xml);
+        batchPage.status = "done";
+
+    });
+
+
+    /* すべてのページが読み込めたら、ocr.json はそのままで書き直さない */
+
+    directory.saved =
+        directory.pages.every(batchPage =>
+            batchPage.status === "done"
+        );
+
+}
+
+
+async function selectFolder() {
+
+    if (batchRunning) {
+
+        showError(
+            "一括OCRの完了後にフォルダを選択してください"
+        );
+
+        return;
+    }
+
+
+    /*
+     * 結果をフォルダの中に書くため、書き込みできるフォルダ選択を使う。
+     * 対応していないブラウザでは、結果を書けないので選択もしない
+     */
+
+    if (typeof window.showDirectoryPicker !== "function") {
+
+        showError(
+            "このブラウザではフォルダに結果を書けません。Chrome か Edge で http://127.0.0.1:5000 を開いてください"
+        );
+
+        return;
+    }
+
+
+    let rootHandle;
+
+    try {
+
+        rootHandle =
+            await window.showDirectoryPicker({
+                mode: "readwrite"
+            });
+
+    } catch (error) {
+
+        /* 選択をキャンセルした場合はエラーにしない */
+
+        if (error.name !== "AbortError") {
+
+            showError(error.message);
+
+        }
+
+        return;
+
+    }
+
+
+    batchProgress.textContent =
+        "フォルダを読み込んでいます…";
+
+    const scan = {
+        pages: [],
+        directories: []
+    };
+
+    try {
+
+        await scanDirectory(
+            rootHandle,
+            rootHandle.name,
+            scan
+        );
+
+    } catch (error) {
+
+        showError(
+            `フォルダを読み込めません: ${error.message}`
+        );
 
         updateBatchProgress();
 
+        return;
+
     }
+
+
+    if (scan.pages.length === 0) {
+
+        showError(
+            "フォルダに画像ファイルがありません"
+        );
+
+        updateBatchProgress();
+
+        return;
+    }
+
+
+    /* 前回の結果（ocr.json）があるフォルダは、使うかやり直すかを選んでもらう */
+
+    const withResult = scan.directories.filter(directory =>
+        directory.resultHandle
+    );
+
+    if (withResult.length > 0) {
+
+        const choice =
+            await askReuseChoice(withResult.length);
+
+        if (choice !== "reuse" && choice !== "redo") {
+
+            updateBatchProgress();
+
+            return;
+
+        }
+
+        if (choice === "reuse") {
+
+            for (const directory of withResult) {
+
+                try {
+
+                    await loadDirectoryResult(directory);
+
+                } catch (error) {
+
+                    showError(
+                        `${directory.path} の結果を読めませんでした: ${error.message}`
+                    );
+
+                }
+
+            }
+
+        }
+
+    }
+
+
+    batchPages = scan.pages;
+
+    batchDirectories = scan.directories;
+
+    currentPageIndex = -1;
+
+    collapsedFolders.clear();
+
+    searchResults.innerHTML = "";
+
+    searchInfo.textContent =
+        "一括OCRの完了後に検索できます";
+
+
+    renderPageList();
+
+    updateBatchControls();
+
+    updateBatchProgress();
+
+}
+
+
+/*
+ * ディレクトリの直下に書く結果。
+ * ページごとに OCR結果（表示用の xml と、src/ocr.py の JSON と同じ contents / imginfo）か、
+ * エラーを入れる。xml は「既存の結果を使う」で表示と検索に使う
+ */
+
+async function saveDirectoryResult(directory) {
+
+    const result = {
+        pages: directory.pages.map(batchPage =>
+            batchPage.status === "done"
+                ? { name: batchPage.file.name, xml: batchPage.xml, ...batchPage.json }
+                : { name: batchPage.file.name, error: batchPage.error }
+        )
+    };
+
+    const fileHandle =
+        await directory.handle.getFileHandle(
+            RESULT_FILE_NAME,
+            { create: true }
+        );
+
+    const writable =
+        await fileHandle.createWritable();
+
+    await writable.write(
+        JSON.stringify(result, null, 2)
+    );
+
+    await writable.close();
+
+}
+
+
+/*
+ * 配下のページがすべて終わったディレクトリから順に結果を書く
+ */
+
+async function saveCompletedDirectories() {
+
+    for (const directory of batchDirectories) {
+
+        const finished =
+            directory.pages.every(batchPage =>
+                batchPage.status === "done"
+                || batchPage.status === "error"
+            );
+
+        if (directory.saved || !finished) {
+
+            continue;
+
+        }
+
+
+        try {
+
+            await saveDirectoryResult(directory);
+
+            directory.saved = true;
+
+        } catch (error) {
+
+            showError(
+                `${directory.path} に結果を書けませんでした: ${error.message}`
+            );
+
+        }
+
+    }
+
+}
+
+
+folderButton.addEventListener(
+    "click",
+    selectFolder
 );
 
 
@@ -2474,6 +3166,20 @@ function searchBatchPages(query) {
 
 
 function showHit(hit) {
+
+    /* 一致したページが閉じたフォルダの中にあると一覧に出ないので、上位のフォルダを開く */
+
+    const names =
+        batchPages[hit.pageIndex].directory.path.split("/");
+
+    names.forEach((_, depth) => {
+
+        collapsedFolders.delete(
+            names.slice(0, depth + 1).join("/")
+        );
+
+    });
+
 
     showPage(hit.pageIndex);
 
