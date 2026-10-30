@@ -343,7 +343,13 @@ dialog::backdrop {
     gap: 8px;
 }
 
-.pageOCR {
+.classifyBar {
+    color: #8ab4ff;
+}
+
+.pageOCR,
+.folderOCR,
+.folderReset {
     flex-shrink: 0;
 
     padding: 3px 8px;
@@ -351,7 +357,9 @@ dialog::backdrop {
     font-size: 12px;
 }
 
-.pageOCR:disabled {
+.pageOCR:disabled,
+.folderOCR:disabled,
+.folderReset:disabled {
     opacity: .5;
 
     cursor: default;
@@ -1000,6 +1008,29 @@ dialog::backdrop {
                     停止
                 </button>
 
+
+                <button id="classifyButton" disabled>
+                    種別判定を始める
+                </button>
+
+                <button id="classifyStopButton" hidden>
+                    止める
+                </button>
+
+            </div>
+
+
+            <div class="tabActions">
+
+                <button id="resetKindButton" disabled>
+                    種別をリセット
+                </button>
+
+
+                <button id="resetOCRButton" disabled>
+                    OCR結果をリセット
+                </button>
+
             </div>
 
 
@@ -1035,6 +1066,8 @@ dialog::backdrop {
             <div id="batchProgress" class="tabInfo">
                 フォルダを選択してください
             </div>
+
+            <div id="classifyBar" class="tabInfo classifyBar" hidden></div>
 
 
             <ul id="pageList"></ul>
@@ -2208,6 +2241,21 @@ const stopButton =
 const batchProgress =
     document.getElementById("batchProgress");
 
+const classifyButton =
+    document.getElementById("classifyButton");
+
+const classifyBar =
+    document.getElementById("classifyBar");
+
+const classifyStopButton =
+    document.getElementById("classifyStopButton");
+
+const resetKindButton =
+    document.getElementById("resetKindButton");
+
+const resetOCRButton =
+    document.getElementById("resetOCRButton");
+
 const pageList =
     document.getElementById("pageList");
 
@@ -2250,6 +2298,14 @@ let batchRunning = false;
 /* 1ページだけのOCRが動いている（同時に1つだけ） */
 
 let pageOCRRunning = false;
+
+/* 種別判定：開始時に未分類だったページ（classifyQueue）と、表示中の位置 */
+
+let classifyQueue = [];
+
+let classifyPosition = -1;
+
+let classifyRunning = false;
 
 let stopRequested = false;
 
@@ -2477,6 +2533,29 @@ function updateBatchControls() {
     stopButton.disabled =
         !batchRunning;
 
+    /* 判定中は「次へ」になり、止めるのは別のボタン（Esc でも止められる） */
+
+    classifyButton.disabled =
+        !classifyRunning
+        && (isOCRBusy() || batchPages.length === 0);
+
+    classifyButton.textContent =
+        classifyRunning
+            ? "次へ"
+            : "種別判定を始める";
+
+    classifyStopButton.hidden = !classifyRunning;
+
+    /* リセットは、OCR中と、フォルダがないときは使えない */
+
+    resetKindButton.disabled =
+        isOCRBusy()
+        || batchPages.length === 0;
+
+    resetOCRButton.disabled =
+        isOCRBusy()
+        || batchPages.length === 0;
+
 }
 
 
@@ -2576,6 +2655,49 @@ function buildPageTree() {
 }
 
 
+/* フォルダの中のページ（サブフォルダのページも含む） */
+
+function pagesUnder(node) {
+
+    return [
+        ...node.pages.map(({ batchPage }) => batchPage),
+        ...[...node.folders.values()].flatMap(pagesUnder)
+    ];
+
+}
+
+
+/* 一覧の行にあるボタン。行を開閉したりページを表示したりしないように、クリックを止める */
+
+function createRowButton(label, className, disabled, run) {
+
+    const button =
+        document.createElement("button");
+
+    button.type = "button";
+
+    button.className = className;
+
+    button.textContent = label;
+
+    button.disabled = disabled;
+
+    button.addEventListener(
+        "click",
+        event => {
+
+            event.stopPropagation();
+
+            run();
+
+        }
+    );
+
+    return button;
+
+}
+
+
 /* フォルダ配下（サブフォルダを含む）のページ数と、完了したページ数 */
 
 function countFolderPages(folder) {
@@ -2669,7 +2791,37 @@ function appendFolderContents(node, depth) {
             `${count.done} / ${count.total}`;
 
 
-        item.append(caret, name, summary);
+        /* OCR は、このフォルダ配下の未処理・失敗したページだけを対象にする */
+
+        item.append(
+            caret,
+            name,
+            summary,
+            createRowButton(
+                "OCR",
+                "folderOCR",
+                isOCRBusy() || count.done === count.total,
+                () => runBatchOCR(pagesUnder(folder))
+            ),
+            createRowButton(
+                "種別リセット",
+                "folderReset",
+                isOCRBusy(),
+                () => resetKinds(
+                    pagesUnder(folder),
+                    `「${folder.key}」の中のページの種別を未分類に戻します。よろしいですか？`
+                )
+            ),
+            createRowButton(
+                "OCRリセット",
+                "folderReset",
+                isOCRBusy(),
+                () => resetOCRResults(
+                    pagesUnder(folder),
+                    `「${folder.key}」の中のページのOCR結果を消します（種別は残します）。よろしいですか？`
+                )
+            )
+        );
 
         item.addEventListener(
             "click",
@@ -2747,7 +2899,16 @@ function appendFolderContents(node, depth) {
         meta.append(
             state,
             createKindSelect(batchPage),
-            createOCRButton(batchPage)
+            createOCRButton(batchPage),
+            createRowButton(
+                "OCRリセット",
+                "pageOCR",
+                isOCRBusy() || batchPage.status === "pending",
+                () => resetOCRResults(
+                    [batchPage],
+                    `「${batchPage.file.name}」のOCR結果を消します（種別は残します）。よろしいですか？`
+                )
+            )
         );
 
 
@@ -2923,7 +3084,7 @@ async function changePageKind(batchPage, kind) {
 
     try {
 
-        await saveDirectoryResult(directory);
+        await saveDirectoryQueued(directory);
 
         directory.saved =
             isDirectoryFinished(directory);
@@ -3082,7 +3243,19 @@ async function requestBatchOCR(batch) {
 }
 
 
-async function runBatchOCR() {
+/* 対象は、全体（一括OCR）か1つのフォルダの中のページ（フォルダ行のOCR） */
+
+async function runBatchOCR(targetPages) {
+
+    if (isOCRBusy()) {
+
+        showError(
+            "実行中のOCRの完了後に、もう一度実行してください"
+        );
+
+        return;
+    }
+
 
     batchRunning = true;
 
@@ -3096,7 +3269,7 @@ async function runBatchOCR() {
     /* 未処理と失敗したページを対象にする（停止後の再実行で続きから処理できる） */
 
     const targets =
-        batchPages.filter(batchPage =>
+        targetPages.filter(batchPage =>
             batchPage.status !== "done"
         );
 
@@ -3252,7 +3425,7 @@ async function runPageOCR(batchPage) {
 
     try {
 
-        await saveDirectoryResult(directory);
+        await saveDirectoryQueued(directory);
 
         directory.saved =
             isDirectoryFinished(directory);
@@ -3282,6 +3455,186 @@ async function runPageOCR(batchPage) {
         renderPageList();
 
     }
+
+}
+
+
+/*
+ * 種別判定：未分類のページを順に表示し、キーで種別を付けていく。
+ * 1: 古典籍、2: メタデータ、→: 分類せずに次へ、Esc: 止める
+ */
+
+const CLASSIFY_KEYS = {
+    "1": "classic",
+    "2": "metadata"
+};
+
+
+function countUnclassified() {
+
+    return batchPages.filter(batchPage =>
+        batchPage.kind === DEFAULT_PAGE_KIND
+    ).length;
+
+}
+
+
+/* 位置 from 以降で、まだ未分類のページの位置。なければ -1 */
+
+function findPendingClassify(from) {
+
+    for (let position = from; position < classifyQueue.length; position++) {
+
+        if (classifyQueue[position].kind === DEFAULT_PAGE_KIND) {
+
+            return position;
+
+        }
+
+    }
+
+    return -1;
+
+}
+
+
+function showClassifyBar(text) {
+
+    classifyBar.textContent = text;
+
+    classifyBar.hidden = false;
+
+}
+
+
+function startClassify() {
+
+    classifyQueue = batchPages.filter(batchPage =>
+        batchPage.kind === DEFAULT_PAGE_KIND
+    );
+
+    if (classifyQueue.length === 0) {
+
+        showClassifyBar(
+            finishedClassifyText()
+        );
+
+        return;
+    }
+
+    classifyRunning = true;
+
+    updateBatchControls();
+
+    showClassifyPage(0);
+
+}
+
+
+function showClassifyPage(position) {
+
+    classifyPosition = position;
+
+    showPage(
+        batchPages.indexOf(classifyQueue[position])
+    );
+
+    showClassifyBar(
+        `種別判定中 ・ 残り ${countUnclassified()} 件 ・ 1: 古典籍　2: メタデータ　→: 後で　Esc: 止める`
+    );
+
+}
+
+
+/* 次の未分類のページへ。残りがなければ判定を終える */
+
+function advanceClassify() {
+
+    const next =
+        findPendingClassify(classifyPosition + 1);
+
+    if (next === -1) {
+
+        finishClassify();
+
+        return;
+    }
+
+    showClassifyPage(next);
+
+}
+
+
+/* 表示中のページに種別を付けて、次へ。種別は一覧と同じく ocr.json にすぐ書く */
+
+function classifyDisplayed(kind) {
+
+    if (isOCRBusy()) {
+
+        showError(
+            "OCRの完了後に種別を付けてください"
+        );
+
+        return;
+    }
+
+
+    const batchPage =
+        batchPages[currentPageIndex];
+
+    if (!batchPage) {
+
+        showError(
+            "一覧のページを表示してから種別を選んでください"
+        );
+
+        return;
+    }
+
+
+    /* 保存は待たずに次へ進む（連続して押しても、保存は順番に書く） */
+
+    changePageKind(batchPage, kind);
+
+    advanceClassify();
+
+}
+
+
+/* 判定が終わったときの表示。未分類が残っていれば、その件数も出す */
+
+function finishedClassifyText() {
+
+    const remaining =
+        countUnclassified();
+
+    return remaining === 0
+        ? "種別判定が終わりました。未分類のページはありません"
+        : `種別判定が終わりました。未分類のページが ${remaining} 件残っています`;
+
+}
+
+
+function finishClassify() {
+
+    classifyRunning = false;
+
+    updateBatchControls();
+
+    showClassifyBar(
+        finishedClassifyText()
+    );
+
+}
+
+
+function stopClassify() {
+
+    classifyRunning = false;
+
+    classifyBar.hidden = true;
+
+    updateBatchControls();
 
 }
 
@@ -3322,6 +3675,10 @@ function showPage(index) {
     } else {
 
         ocrLayer.innerHTML = "";
+
+        /* 前のページのXMLを残さないように、XMLの欄も空にする */
+
+        xmlInput.value = "";
 
         /* 結果がないのでPAGEの大きさもない。画像の大きさで表示する（onload で合わせる） */
 
@@ -3549,6 +3906,11 @@ async function selectFolder() {
     }
 
 
+    /* 種別判定は、開いていたフォルダのものなので止める */
+
+    stopClassify();
+
+
     /*
      * 結果をフォルダの中に書くため、書き込みできるフォルダ選択を使う。
      * 対応していないブラウザでは、結果を書けないので選択もしない
@@ -3729,6 +4091,28 @@ async function saveDirectoryResult(directory) {
 }
 
 
+/*
+ * ocr.json の書き込みは1つずつ順番に行う。並行して書くと、後に閉じたほうが古い内容で上書きしてしまうため。
+ * 書く内容は、順番が来たときのフォルダの状態を使う
+ */
+
+let resultSaveChain = Promise.resolve();
+
+
+function saveDirectoryQueued(directory) {
+
+    const saving =
+        resultSaveChain.then(() =>
+            saveDirectoryResult(directory)
+        );
+
+    resultSaveChain = saving.catch(() => {});
+
+    return saving;
+
+}
+
+
 /* ディレクトリ配下のページがすべて終わった（成功か失敗）かどうか */
 
 function isDirectoryFinished(directory) {
@@ -3758,7 +4142,7 @@ async function saveCompletedDirectories() {
 
         try {
 
-            await saveDirectoryResult(directory);
+            await saveDirectoryQueued(directory);
 
             directory.saved = true;
 
@@ -3771,6 +4155,142 @@ async function saveCompletedDirectories() {
         }
 
     }
+
+}
+
+
+/*
+ * リセット。読み込んでいるフォルダのすべてのページが対象で、ocr.json も書き直す
+ */
+
+/*
+ * 対象のページがあるフォルダの ocr.json を書き直す（リセットのあとの内容を残すため）
+ */
+
+async function saveDirectoriesOf(targetPages) {
+
+    const directories =
+        [...new Set(targetPages.map(batchPage => batchPage.directory))];
+
+    directories.forEach(directory => {
+
+        directory.saved = false;
+
+    });
+
+
+    for (const directory of directories) {
+
+        try {
+
+            await saveDirectoryQueued(directory);
+
+            directory.saved =
+                isDirectoryFinished(directory);
+
+        } catch (error) {
+
+            showError(
+                `${directory.path} に結果を書けませんでした: ${error.message}`
+            );
+
+        }
+
+    }
+
+}
+
+
+/* 対象のページの種別を未分類に戻す（対象は、全体または1つのフォルダの中のページ） */
+
+async function resetKinds(targetPages, message) {
+
+    if (isOCRBusy()) {
+
+        showError(
+            "OCRの完了後にリセットしてください"
+        );
+
+        return;
+    }
+
+
+    if (!window.confirm(message)) {
+
+        return;
+    }
+
+
+    /* 判定中は、種別を書き換えるので止める */
+
+    stopClassify();
+
+    targetPages.forEach(batchPage => {
+
+        batchPage.kind = DEFAULT_PAGE_KIND;
+
+    });
+
+    renderPageList();
+
+    await saveDirectoriesOf(targetPages);
+
+    updateBatchProgress();
+
+}
+
+
+/* 対象のページのOCR結果を消す（種別は残す）。対象は、全体または1つのフォルダの中のページ */
+
+async function resetOCRResults(targetPages, message) {
+
+    if (isOCRBusy()) {
+
+        showError(
+            "OCRの完了後にリセットしてください"
+        );
+
+        return;
+    }
+
+
+    if (!window.confirm(message)) {
+
+        return;
+    }
+
+
+    targetPages.forEach(batchPage => {
+
+        batchPage.status = "pending";
+        batchPage.error = "";
+        batchPage.xml = "";
+        batchPage.json = null;
+        batchPage.searchData = null;
+
+    });
+
+
+    /* 検索結果は、消したOCR結果を指しているので空にする */
+
+    searchResults.innerHTML = "";
+
+    searchInfo.textContent =
+        "一括OCRの完了後に検索できます";
+
+    renderPageList();
+
+    /* 表示中のページは、結果のない表示に変える */
+
+    if (targetPages.includes(batchPages[currentPageIndex])) {
+
+        showPage(currentPageIndex);
+
+    }
+
+    await saveDirectoriesOf(targetPages);
+
+    updateBatchProgress();
 
 }
 
@@ -3830,6 +4350,16 @@ kindOverlay.replaceChildren(
             "click",
             () => {
 
+                /* 種別判定中は、種別を付けて次の未分類のページへ進む */
+
+                if (classifyRunning) {
+
+                    classifyDisplayed(kind);
+
+                    return;
+                }
+
+
                 const batchPage =
                     batchPages[currentPageIndex];
 
@@ -3867,7 +4397,94 @@ folderButton.addEventListener(
 
 batchButton.addEventListener(
     "click",
-    runBatchOCR
+    () => runBatchOCR(batchPages)
+);
+
+
+classifyButton.addEventListener(
+    "click",
+    () => {
+
+        /* 判定中は、分類せずに次の未分類へ進む */
+
+        if (classifyRunning) {
+
+            advanceClassify();
+
+        } else {
+
+            startClassify();
+
+        }
+
+    }
+);
+
+
+resetKindButton.addEventListener(
+    "click",
+    () => resetKinds(
+        batchPages,
+        "すべてのページの種別を「未分類」に戻します。よろしいですか？"
+    )
+);
+
+
+resetOCRButton.addEventListener(
+    "click",
+    () => resetOCRResults(
+        batchPages,
+        "すべてのページのOCR結果を消します（種別は残します）。よろしいですか？"
+    )
+);
+
+
+classifyStopButton.addEventListener(
+    "click",
+    stopClassify
+);
+
+
+/* 種別判定中のキー操作。文字入力やダイアログの中では、キーを種別に使わない */
+
+document.addEventListener(
+    "keydown",
+    event => {
+
+        if (!classifyRunning || event.ctrlKey || event.metaKey || event.altKey) {
+
+            return;
+        }
+
+        if (
+            (event.target instanceof Element && event.target.matches("input, textarea, select"))
+            || reuseDialog.open
+        ) {
+
+            return;
+        }
+
+        if (Object.hasOwn(CLASSIFY_KEYS, event.key)) {
+
+            event.preventDefault();
+
+            classifyDisplayed(CLASSIFY_KEYS[event.key]);
+
+        } else if (event.key === "ArrowRight") {
+
+            event.preventDefault();
+
+            advanceClassify();
+
+        } else if (event.key === "Escape") {
+
+            event.preventDefault();
+
+            stopClassify();
+
+        }
+
+    }
 );
 
 
