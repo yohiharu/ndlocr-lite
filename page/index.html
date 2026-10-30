@@ -343,6 +343,20 @@ dialog::backdrop {
     gap: 8px;
 }
 
+.pageOCR {
+    flex-shrink: 0;
+
+    padding: 3px 8px;
+
+    font-size: 12px;
+}
+
+.pageOCR:disabled {
+    opacity: .5;
+
+    cursor: default;
+}
+
 .tabInfo {
     padding: 0 10px 8px;
 
@@ -1690,6 +1704,19 @@ async function runOCR() {
     }
 
 
+    /* 一覧のページを開いているときは、そのページの結果として保存する */
+
+    const batchPage =
+        batchPages[currentPageIndex];
+
+    if (batchPage && batchPage.file === imageFile) {
+
+        await runPageOCR(batchPage);
+
+        return;
+    }
+
+
     ocrButton.disabled = true;
 
     status.textContent =
@@ -2220,6 +2247,10 @@ let currentPageIndex = -1;
 
 let batchRunning = false;
 
+/* 1ページだけのOCRが動いている（同時に1つだけ） */
+
+let pageOCRRunning = false;
+
 let stopRequested = false;
 
 
@@ -2426,10 +2457,21 @@ function countBatchPages(status) {
 }
 
 
+/*
+ * 一括OCR か 1ページのOCR が動いている間は、フォルダや結果を書いている操作を止める
+ */
+
+function isOCRBusy() {
+
+    return batchRunning || pageOCRRunning;
+
+}
+
+
 function updateBatchControls() {
 
     batchButton.disabled =
-        batchRunning
+        isOCRBusy()
         || batchPages.length === 0;
 
     stopButton.disabled =
@@ -2704,7 +2746,8 @@ function appendFolderContents(node, depth) {
 
         meta.append(
             state,
-            createKindSelect(batchPage)
+            createKindSelect(batchPage),
+            createOCRButton(batchPage)
         );
 
 
@@ -2771,9 +2814,9 @@ function renderKindOverlay() {
 
         button.setAttribute("aria-pressed", String(isActive));
 
-        /* 一括OCR中は、結果を書いているフォルダと競合しないように変えられない */
+        /* OCR中は、結果を書いているフォルダと競合しないように変えられない */
 
-        button.disabled = batchRunning;
+        button.disabled = isOCRBusy();
 
     });
 
@@ -2796,9 +2839,9 @@ function createKindSelect(batchPage) {
 
     select.className = "pageKind";
 
-    /* 一括OCR中は、結果を書いているフォルダと競合しないように変えられない */
+    /* OCR中は、結果を書いているフォルダと競合しないように変えられない */
 
-    select.disabled = batchRunning;
+    select.disabled = isOCRBusy();
 
     select.replaceChildren(...makeKindOptions());
 
@@ -2818,6 +2861,42 @@ function createKindSelect(batchPage) {
     );
 
     return select;
+
+}
+
+
+/*
+ * ページを1枚だけOCRするボタン。ページを開いてしまわないように、クリックを止める
+ */
+
+function createOCRButton(batchPage) {
+
+    const button =
+        document.createElement("button");
+
+    button.type = "button";
+
+    button.className = "pageOCR";
+
+    button.textContent =
+        batchPage.status === "done"
+            ? "再OCR"
+            : "OCR";
+
+    button.disabled = isOCRBusy();
+
+    button.addEventListener(
+        "click",
+        event => {
+
+            event.stopPropagation();
+
+            runPageOCR(batchPage);
+
+        }
+    );
+
+    return button;
 
 }
 
@@ -3108,6 +3187,105 @@ async function runBatchOCR() {
 }
 
 
+/*
+ * 一覧の1ページだけをOCRする。一括OCRと同じ送信を1枚で使い、結果はそのページに入れて、
+ * フォルダの ocr.json にすぐ書く（種別を変えたときと同じ）
+ */
+
+async function runPageOCR(batchPage) {
+
+    if (isOCRBusy()) {
+
+        showError(
+            "実行中のOCRの完了後に、もう一度実行してください"
+        );
+
+        return;
+    }
+
+
+    const directory =
+        batchPage.directory;
+
+    pageOCRRunning = true;
+
+    batchPage.status = "running";
+
+    batchPage.error = "";
+
+    updateBatchControls();
+
+    renderPageList();
+
+
+    /* 表示中のページなら、ツールバーにも処理中と出す */
+
+    if (batchPages[currentPageIndex] === batchPage) {
+
+        status.textContent =
+            "OCR処理中…";
+
+    }
+
+
+    try {
+
+        await requestBatchOCR([batchPage]);
+
+    } catch (error) {
+
+        batchPage.status = "error";
+        batchPage.error = error.message;
+
+        showError(error.message);
+
+    } finally {
+
+        pageOCRRunning = false;
+
+    }
+
+
+    /* 書けなかったときは、ファイルの内容と違うので保存済みとしない */
+
+    directory.saved = false;
+
+    try {
+
+        await saveDirectoryResult(directory);
+
+        directory.saved =
+            isDirectoryFinished(directory);
+
+    } catch (error) {
+
+        showError(
+            `${directory.path} に結果を書けませんでした: ${error.message}`
+        );
+
+    }
+
+
+    updateBatchControls();
+
+    updateBatchProgress();
+
+
+    /* 表示中のページなら、結果を表示する */
+
+    if (batchPages[currentPageIndex] === batchPage) {
+
+        showPage(currentPageIndex);
+
+    } else {
+
+        renderPageList();
+
+    }
+
+}
+
+
 function showPage(index) {
 
     const batchPage =
@@ -3361,10 +3539,10 @@ async function loadDirectoryResult(directory, withOCR) {
 
 async function selectFolder() {
 
-    if (batchRunning) {
+    if (isOCRBusy()) {
 
         showError(
-            "一括OCRの完了後にフォルダを選択してください"
+            "OCRの完了後にフォルダを選択してください"
         );
 
         return;
