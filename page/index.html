@@ -815,6 +815,10 @@ dialog::backdrop {
 
     object-fit: fill;
 
+    /* OCRで反映した回転で表示するときは、左上を基準に回す（layoutBackgroundImage） */
+
+    transform-origin: top left;
+
     display: none;
 
     z-index: 1;
@@ -1520,6 +1524,13 @@ let pageHeight = 4016;
 
 let pageSizeFromXML = false;
 
+/*
+ * 表示中のOCR結果で、サーバーが画像に反映した回転（EXIF Orientation の 1〜8）。
+ * 分からないとき（OCR結果がない・前の版の結果）は null で、ブラウザに任せて表示する
+ */
+
+let imageOrientation = null;
+
 let scale = 0.30;
 
 let imageURL = null;
@@ -1561,7 +1572,9 @@ function showError(message) {
    OCR結果（サーバーが返す XML）を表示する
 ================================================== */
 
-function parseXML(source) {
+/* orientation は、サーバーがOCRの前に画像に反映した回転（分からないときは null） */
+
+function parseXML(source, orientation = null) {
 
     if (!source.trim()) {
 
@@ -1622,6 +1635,8 @@ function parseXML(source) {
 
     pageSizeFromXML = Boolean(pageNode);
 
+    imageOrientation = orientation;
+
 
     /*
      * ページサイズ
@@ -1632,6 +1647,10 @@ function parseXML(source) {
 
     page.style.height =
         pageHeight + "px";
+
+    /* 画像も、OCRと同じ回転・大きさで重ねる */
+
+    layoutBackgroundImage();
 
 
     /*
@@ -1725,10 +1744,18 @@ function parseXML(source) {
 
 
         /*
+         * 縦書きか横書きか。src/ocr.py と同じく、高さが幅より大きい行を縦書きにする
+         */
+
+        const vertical =
+            h > w;
+
+
+        /*
          * OCR文字サイズ
          *
-         * 縦書きの場合、
-         * 高さ / 文字数
+         * 縦書きは 高さ / 文字数。
+         * 横書きは 幅 / 文字数 で、行の高さを超えないようにする
          */
 
         const chars =
@@ -1736,9 +1763,11 @@ function parseXML(source) {
 
 
         let fontSize =
-            chars > 0
-                ? h / chars
-                : 55;
+            chars === 0
+                ? 55
+                : vertical
+                    ? h / chars
+                    : Math.min(w / chars, h);
 
 
         fontSize =
@@ -1768,12 +1797,10 @@ function parseXML(source) {
 
 
         /*
-         * 横書き判定
+         * 横書き
          */
 
-        if (
-            w > h * 1.5
-        ) {
+        if (!vertical) {
 
             element.classList.add(
                 "horizontal"
@@ -1863,6 +1890,68 @@ ${order}`;
 }
 
 
+/*
+ * 画像の回転（EXIF Orientation）ごとに、回転前の画像を正立した向きへ写す変換。
+ * W, H は正立した画像（= OCRの座標）の幅と高さ。5〜8 は回転前の画像の幅と高さが入れ替わる
+ */
+
+const ORIENTATION_TRANSFORMS = {
+    1: () => "none",
+    2: (W, H) => `matrix(-1, 0, 0, 1, ${W}, 0)`,
+    3: (W, H) => `matrix(-1, 0, 0, -1, ${W}, ${H})`,
+    4: (W, H) => `matrix(1, 0, 0, -1, 0, ${H})`,
+    5: (W, H) => "matrix(0, 1, 1, 0, 0, 0)",
+    6: (W, H) => `matrix(0, 1, -1, 0, ${W}, 0)`,
+    7: (W, H) => `matrix(0, -1, -1, 0, ${W}, ${H})`,
+    8: (W, H) => `matrix(0, -1, 1, 0, 0, ${H})`
+};
+
+
+/*
+ * 画像をページに重ねる。
+ * サーバーが反映した回転が分かるときは、ブラウザに画像の回転情報を使わせず、その回転で表示する
+ * （ブラウザが回転情報を使うかは形式で違い、Chrome は WebP の回転情報を使わないため、OCRの座標とずれる）。
+ * 分からないときは、ブラウザの表示のまま、ページの大きさに合わせる
+ */
+
+function layoutBackgroundImage() {
+
+    const transform =
+        pageSizeFromXML
+            ? ORIENTATION_TRANSFORMS[imageOrientation]
+            : undefined;
+
+    if (!transform) {
+
+        backgroundImage.style.imageOrientation = "";
+
+        backgroundImage.style.width = "";
+
+        backgroundImage.style.height = "";
+
+        backgroundImage.style.transform = "";
+
+        return;
+    }
+
+
+    const swapped =
+        imageOrientation >= 5;
+
+    backgroundImage.style.imageOrientation = "none";
+
+    backgroundImage.style.width =
+        (swapped ? pageHeight : pageWidth) + "px";
+
+    backgroundImage.style.height =
+        (swapped ? pageWidth : pageHeight) + "px";
+
+    backgroundImage.style.transform =
+        transform(pageWidth, pageHeight);
+
+}
+
+
 /* ==================================================
    画像読み込み
 ================================================== */
@@ -1896,6 +1985,10 @@ function loadImage(file) {
         closeDetails();
 
         pageSizeFromXML = false;
+
+        imageOrientation = null;
+
+        layoutBackgroundImage();
 
     }
 
@@ -2079,9 +2172,14 @@ async function runOCR() {
         const source =
             await response.text();
 
+        /* サーバーがOCRの前に反映した回転。この回転で画像を表示する（前の版のサーバーは返さない） */
+
+        const orientation =
+            Number(response.headers.get("X-Image-Orientation")) || null;
+
         if (imageFile === target) {
 
-            parseXML(source);
+            parseXML(source, orientation);
 
         }
 
@@ -2221,6 +2319,53 @@ viewport.addEventListener(
         if (image) {
 
             loadImage(image);
+
+        }
+
+    }
+);
+
+
+/*
+ * 表示領域の外（ツールバー・左の一覧など）にファイルを落としたときは、受け付けない。
+ * 既定のままだと、ブラウザがそのファイルを開き、ページから離れて読み込んだ一覧や結果が消えるため。
+ * 文字のドラッグ（検索欄への貼り付けなど）は止めない
+ */
+
+function isFileDragOutsideViewport(event) {
+
+    return event.dataTransfer
+        && [...event.dataTransfer.types].includes("Files")
+        && !viewport.contains(event.target);
+
+}
+
+
+document.addEventListener(
+    "dragover",
+    event => {
+
+        if (isFileDragOutsideViewport(event)) {
+
+            event.preventDefault();
+
+            /* 落とせない場所であることを、カーソルで示す */
+
+            event.dataTransfer.dropEffect = "none";
+
+        }
+
+    }
+);
+
+
+document.addEventListener(
+    "drop",
+    event => {
+
+        if (isFileDragOutsideViewport(event)) {
+
+            event.preventDefault();
 
         }
 
@@ -2603,6 +2748,10 @@ let currentPageIndex = -1;
 
 let batchRunning = false;
 
+/* フォルダを読み込んでいる（フォルダの選択から、一覧を入れ替えるまで） */
+
+let folderLoading = false;
+
 /* 1ページだけのOCRが動いている（同時に1つだけ） */
 
 let pageOCRRunning = false;
@@ -2983,6 +3132,12 @@ function addPageKind(text) {
 
 function removePageKind(kind) {
 
+    if (rejectWhileFolderLoading()) {
+
+        return;
+    }
+
+
     const count =
         batchPages.filter(batchPage =>
             batchPage.kind === kind
@@ -3151,10 +3306,40 @@ function isOCRBusy() {
 }
 
 
+/*
+ * OCR中か、フォルダを読み込んでいる間。
+ * 読み込みの途中で一覧が新しいフォルダに入れ替わるため、今の一覧のページを変える操作（OCR・種別・リセット・判定）と、
+ * フォルダの選択を止める
+ */
+
+function isListLocked() {
+
+    return isOCRBusy() || folderLoading;
+
+}
+
+
+/* フォルダの読み込み中なら、理由を出して true を返す（ボタン以外から呼ばれたとき用） */
+
+function rejectWhileFolderLoading() {
+
+    if (folderLoading) {
+
+        showError(
+            "フォルダの読み込みが終わってから、もう一度操作してください"
+        );
+
+    }
+
+    return folderLoading;
+
+}
+
+
 function updateBatchControls() {
 
     batchButton.disabled =
-        isOCRBusy()
+        isListLocked()
         || batchPages.length === 0;
 
     /* 停止は、一括OCRのほか、1ページだけのOCR中も使える */
@@ -3162,11 +3347,16 @@ function updateBatchControls() {
     stopButton.disabled =
         !isOCRBusy();
 
+    /* 読み込みの途中で、もう一度フォルダを選ばない */
+
+    folderButton.disabled =
+        folderLoading;
+
     /* 判定中は「次へ」になり、止めるのは別のボタン（Esc でも止められる） */
 
     classifyButton.disabled =
         !classifyRunning
-        && (isOCRBusy() || batchPages.length === 0);
+        && (isListLocked() || batchPages.length === 0);
 
     classifyButton.textContent =
         classifyRunning
@@ -3178,13 +3368,13 @@ function updateBatchControls() {
     /* リセットは、OCR中と、消すもの（種別・OCRの結果や失敗）がないときは使えない */
 
     resetKindButton.disabled =
-        isOCRBusy()
+        isListLocked()
         || batchPages.every(batchPage =>
             batchPage.kind === DEFAULT_PAGE_KIND
         );
 
     resetOCRButton.disabled =
-        isOCRBusy()
+        isListLocked()
         || batchPages.every(batchPage =>
             batchPage.status === "pending"
         );
@@ -3212,7 +3402,7 @@ function updateOCRButton() {
     ocrButton.disabled =
         !imageFile
         || singleOCRRunning
-        || (isListPage && isOCRBusy());
+        || (isListPage && isListLocked());
 
     ocrButton.textContent =
         singleOCRRunning || (isListPage && current.status === "running")
@@ -3494,13 +3684,13 @@ function appendFolderContents(node, depth) {
             createRowButton(
                 "OCR",
                 "folderOCR",
-                isOCRBusy() || count.done === count.total,
+                isListLocked() || count.done === count.total,
                 () => runBatchOCR(pagesUnder(folder))
             ),
             createRowButton(
                 "種別判定",
                 "folderClassify",
-                isOCRBusy() || classifyRunning || count.unclassified === 0,
+                isListLocked() || classifyRunning || count.unclassified === 0,
                 () => startClassify(pagesUnder(folder), folder.key)
             ),
             /* リセットは、消すもの（種別・OCRの結果や失敗）がないときは押せない */
@@ -3508,7 +3698,7 @@ function appendFolderContents(node, depth) {
             createRowButton(
                 "種別リセット",
                 "folderReset",
-                isOCRBusy() || count.unclassified === count.total,
+                isListLocked() || count.unclassified === count.total,
                 () => resetKinds(
                     pagesUnder(folder),
                     `「${folder.key}」の中のページの種別を外します。よろしいですか？`
@@ -3517,7 +3707,7 @@ function appendFolderContents(node, depth) {
             createRowButton(
                 "OCRリセット",
                 "folderReset",
-                isOCRBusy() || count.pending === count.total,
+                isListLocked() || count.pending === count.total,
                 () => resetOCRResults(
                     pagesUnder(folder),
                     `「${folder.key}」の中のページのOCR結果を消します（種別は残します）。よろしいですか？`
@@ -3612,7 +3802,7 @@ function appendFolderContents(node, depth) {
             createRowButton(
                 "OCRリセット",
                 "pageOCR dangerButton",
-                isOCRBusy() || batchPage.status === "pending",
+                isListLocked() || batchPage.status === "pending",
                 () => resetOCRResults(
                     [batchPage],
                     `「${batchPage.file.name}」のOCR結果を消します（種別は残します）。よろしいですか？`
@@ -3692,9 +3882,9 @@ function renderKindOverlay() {
 
         button.setAttribute("aria-pressed", String(isActive));
 
-        /* OCR中は、結果を書いているフォルダと競合しないように変えられない */
+        /* OCR中は結果を書いているフォルダと競合しないように、フォルダの読み込み中は一覧が入れ替わるので、変えられない */
 
-        button.disabled = isOCRBusy();
+        button.disabled = isListLocked();
 
     });
 
@@ -3722,9 +3912,9 @@ function createKindSelect(batchPage) {
 
     select.className = "pageKind";
 
-    /* OCR中は、結果を書いているフォルダと競合しないように変えられない */
+    /* OCR中は結果を書いているフォルダと競合しないように、フォルダの読み込み中は一覧が入れ替わるので、変えられない */
 
-    select.disabled = isOCRBusy();
+    select.disabled = isListLocked();
 
     select.replaceChildren(...makeKindOptions());
 
@@ -3766,7 +3956,7 @@ function createOCRButton(batchPage) {
             ? "再OCR"
             : "OCR";
 
-    button.disabled = isOCRBusy();
+    button.disabled = isListLocked();
 
     button.addEventListener(
         "click",
@@ -3958,8 +4148,13 @@ async function requestBatchOCR(batch) {
 
         if (result.error) {
 
+            /* 失敗したページには結果を持たせない（表示・検索・ocr.json が失敗と食い違わないように） */
+
             batchPage.status = "error";
             batchPage.error = result.error;
+            batchPage.xml = "";
+            batchPage.json = null;
+            batchPage.searchData = null;
 
             return;
         }
@@ -3980,6 +4175,9 @@ async function requestBatchOCR(batch) {
 
             batchPage.status = "error";
             batchPage.error = "OCR結果がありません";
+            batchPage.xml = "";
+            batchPage.json = null;
+            batchPage.searchData = null;
 
         }
 
@@ -3991,6 +4189,12 @@ async function requestBatchOCR(batch) {
 /* 対象は、全体（一括OCR）か1つのフォルダの中のページ（フォルダ行のOCR） */
 
 async function runBatchOCR(targetPages) {
+
+    if (rejectWhileFolderLoading()) {
+
+        return;
+    }
+
 
     if (isOCRBusy()) {
 
@@ -4033,6 +4237,14 @@ async function runBatchOCR(targetPages) {
     updateBatchProgress();
 
 
+    /*
+     * この実行で結果（成功・失敗）が変わったページのディレクトリ。
+     * 停止や失敗で終わっても、終わるときに途中までの結果を書く
+     */
+
+    const changedDirectories = new Set();
+
+
     for (const batch of makeBatches(targets)) {
 
         if (stopRequested) {
@@ -4055,6 +4267,8 @@ async function runBatchOCR(targetPages) {
         updateBatchProgress();
 
 
+        let aborted = false;
+
         try {
 
             await requestBatchOCR(batch);
@@ -4063,7 +4277,7 @@ async function runBatchOCR(targetPages) {
 
             /* 停止で中断したページは、失敗ではなく未処理に戻す（続きから再実行できる） */
 
-            const aborted =
+            aborted =
                 error.name === "AbortError";
 
             batch.forEach(batchPage => {
@@ -4085,6 +4299,19 @@ async function runBatchOCR(targetPages) {
         } finally {
 
             activeRequest = null;
+
+        }
+
+
+        /* 停止で中断した送信のページは未処理に戻しただけなので、書き直すものはない */
+
+        if (!aborted) {
+
+            batch.forEach(batchPage => {
+
+                changedDirectories.add(batchPage.directory);
+
+            });
 
         }
 
@@ -4138,6 +4365,19 @@ async function runBatchOCR(targetPages) {
     await saveCompletedDirectories();
 
 
+    /*
+     * 配下がまだ終わっていないディレクトリ（停止したなど）も、完了したページの結果を書いておく。
+     * タブを閉じても失われず、次は「既存の結果を使う」で続きからOCRできる
+     */
+
+    await saveDirectoriesOf(
+        targets.filter(batchPage =>
+            changedDirectories.has(batchPage.directory)
+            && !batchPage.directory.saved
+        )
+    );
+
+
     batchRunning = false;
 
     /* 一括OCR中は無効にしていた種別の選択を、ここで戻す */
@@ -4158,6 +4398,12 @@ async function runBatchOCR(targetPages) {
 
 async function runPageOCR(batchPage) {
 
+    if (rejectWhileFolderLoading()) {
+
+        return;
+    }
+
+
     if (isOCRBusy()) {
 
         showError(
@@ -4170,6 +4416,19 @@ async function runPageOCR(batchPage) {
 
     const directory =
         batchPage.directory;
+
+    /*
+     * 実行前の状態。停止したときと、完了していたページの再OCRが失敗したときは、この状態に戻す
+     * （前の結果を消さない）。実行中も前の結果は持ったままにし、その間に ocr.json を書いても残るようにする
+     */
+
+    const before = {
+        status: batchPage.status,
+        error: batchPage.error,
+        xml: batchPage.xml,
+        json: batchPage.json,
+        searchData: batchPage.searchData
+    };
 
     pageOCRRunning = true;
 
@@ -4194,20 +4453,25 @@ async function runPageOCR(batchPage) {
 
         await requestBatchOCR([batchPage]);
 
+        /* サーバーがこのページだけ失敗を返したとき */
+
+        if (batchPage.status === "error") {
+
+            failPageOCR(batchPage, before, batchPage.error);
+
+        }
+
     } catch (error) {
 
-        /* 停止で中断したときは、失敗ではなく未処理に戻す */
+        /* 停止で中断したときは、実行前の状態（結果があれば結果）に戻す */
 
         if (error.name === "AbortError") {
 
-            batchPage.status = "pending";
+            Object.assign(batchPage, before);
 
         } else {
 
-            batchPage.status = "error";
-            batchPage.error = error.message;
-
-            showError(error.message);
+            failPageOCR(batchPage, before, error.message);
 
         }
 
@@ -4256,6 +4520,36 @@ async function runPageOCR(batchPage) {
         renderPageList();
 
     }
+
+}
+
+
+/*
+ * 1ページのOCRが失敗したとき。完了していたページ（再OCR）は前の結果を残して完了のままにし、
+ * それ以外は失敗にする。どちらもエラーを出す
+ */
+
+function failPageOCR(batchPage, before, message) {
+
+    if (before.status === "done") {
+
+        Object.assign(batchPage, before);
+
+        showError(
+            `再OCRに失敗しました（前の結果を残します）: ${message}`
+        );
+
+        return;
+    }
+
+
+    batchPage.status = "error";
+    batchPage.error = message;
+    batchPage.xml = "";
+    batchPage.json = null;
+    batchPage.searchData = null;
+
+    showError(message);
 
 }
 
@@ -4344,6 +4638,12 @@ function showClassifyBar(text) {
 
 function startClassify(targetPages, folderKey = "") {
 
+    if (rejectWhileFolderLoading()) {
+
+        return;
+    }
+
+
     /* 付ける種別がないと判定できないので、先に登録してもらう */
 
     if (Object.keys(PAGE_KIND_LABELS).length === 0) {
@@ -4424,6 +4724,12 @@ function advanceClassify() {
 /* 表示中のページに種別を付けて、次へ。種別は一覧と同じく ocr.json にすぐ書く */
 
 function classifyDisplayed(kind) {
+
+    if (rejectWhileFolderLoading()) {
+
+        return;
+    }
+
 
     if (isOCRBusy()) {
 
@@ -4536,7 +4842,12 @@ function showPage(index) {
 
     if (batchPage.xml) {
 
-        parseXML(batchPage.xml);
+        /* サーバーが反映した回転（前の版で書いた結果にはないので、そのときは null） */
+
+        parseXML(
+            batchPage.xml,
+            batchPage.json?.imginfo?.orientation ?? null
+        );
 
     } else {
 
@@ -4544,9 +4855,13 @@ function showPage(index) {
 
         closeDetails();
 
-        /* 結果がないのでPAGEの大きさもない。画像の大きさで表示する（onload で合わせる） */
+        /* 結果がないのでPAGEの大きさも回転もない。画像の大きさで表示する（onload で合わせる） */
 
         pageSizeFromXML = false;
+
+        imageOrientation = null;
+
+        layoutBackgroundImage();
 
     }
 
@@ -4638,6 +4953,7 @@ async function scanDirectory(dirHandle, path, scan) {
             handle: dirHandle,
             resultHandle,
             pages: [],
+            otherSavedPages: [],
             saved: false
         };
 
@@ -4707,9 +5023,29 @@ async function loadDirectoryResult(directory, withOCR) {
     const result =
         JSON.parse(await file.text());
 
+    /* 名前のないページの記録は、どのページのものか分からないので使わない */
+
+    const validPages =
+        result.pages.filter(savedPage =>
+            savedPage
+            && typeof savedPage.name === "string"
+        );
+
     const savedPages = new Map(
-        result.pages.map(savedPage => [savedPage.name, savedPage])
+        validPages.map(savedPage => [savedPage.name, savedPage])
     );
+
+
+    /* 一覧にないページの記録は、ocr.json を書き直すときに消さないよう、そのまま持っておく */
+
+    const listedNames = new Set(
+        directory.pages.map(batchPage => batchPage.file.name)
+    );
+
+    directory.otherSavedPages =
+        validPages.filter(savedPage =>
+            !listedNames.has(savedPage.name)
+        );
 
     directory.pages.forEach(batchPage => {
 
@@ -4755,6 +5091,14 @@ async function loadDirectoryResult(directory, withOCR) {
 
 
 async function selectFolder() {
+
+    /* 読み込みの途中では選び直さない（ボタンも押せない） */
+
+    if (folderLoading) {
+
+        return;
+    }
+
 
     if (isOCRBusy()) {
 
@@ -4809,6 +5153,34 @@ async function selectFolder() {
 
     }
 
+
+    /*
+     * 読み込みが終わるまで、今の一覧のページを変える操作と、フォルダの選択を止める。
+     * 止めないと、読み込みの途中で始めたOCRや種別の変更が、入れ替わる前の一覧に対して動く
+     */
+
+    folderLoading = true;
+
+    renderPageList();
+
+    try {
+
+        await loadFolder(rootHandle);
+
+    } finally {
+
+        folderLoading = false;
+
+        renderPageList();
+
+    }
+
+}
+
+
+/* 選んだフォルダを読み込み、一覧を入れ替える（前回の結果があれば、使うかを選んでもらう） */
+
+async function loadFolder(rootHandle) {
 
     batchProgress.textContent =
         "フォルダを読み込んでいます…";
@@ -4920,17 +5292,22 @@ async function selectFolder() {
 /*
  * ディレクトリの直下に書く結果。
  * ページごとに種別と、OCR結果（表示用の xml と、src/ocr.py の JSON と同じ contents / imginfo）か、
- * エラーを入れる。xml は「既存の結果を使う」で表示と検索に使う
+ * エラーを入れる。xml は「既存の結果を使う」で表示と検索に使う。
+ * 結果は、持っていれば書く（再OCR中のページは、前の結果を書く）。
+ * 前回の ocr.json にあって一覧にないページ（対象の拡張子から外した・名前を変えたなど）は、そのまま残す
  */
 
 async function saveDirectoryResult(directory) {
 
     const result = {
-        pages: directory.pages.map(batchPage =>
-            batchPage.status === "done"
-                ? { name: batchPage.file.name, kind: batchPage.kind, xml: batchPage.xml, ...batchPage.json }
-                : { name: batchPage.file.name, kind: batchPage.kind, error: batchPage.error }
-        )
+        pages: [
+            ...directory.pages.map(batchPage =>
+                batchPage.xml
+                    ? { name: batchPage.file.name, kind: batchPage.kind, xml: batchPage.xml, ...batchPage.json }
+                    : { name: batchPage.file.name, kind: batchPage.kind, error: batchPage.error }
+            ),
+            ...directory.otherSavedPages
+        ]
     };
 
     const fileHandle =
@@ -5065,6 +5442,12 @@ async function saveDirectoriesOf(targetPages) {
 
 async function resetKinds(targetPages, message) {
 
+    if (rejectWhileFolderLoading()) {
+
+        return;
+    }
+
+
     if (isOCRBusy()) {
 
         showError(
@@ -5103,6 +5486,12 @@ async function resetKinds(targetPages, message) {
 /* 対象のページのOCR結果を消す（種別は残す）。対象は、全体または1つのフォルダの中のページ */
 
 async function resetOCRResults(targetPages, message) {
+
+    if (rejectWhileFolderLoading()) {
+
+        return;
+    }
+
 
     if (isOCRBusy()) {
 

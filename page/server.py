@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 # どれを処理するかはページの設定（対象の拡張子）で選ぶ
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "tif", "tiff", "jp2", "bmp", "webp"}
 
+# 画素に反映する回転（EXIF Orientation）の値。1 は回転なし、それ以外の値は不正として扱わない
+EXIF_ORIENTATIONS = {2, 3, 4, 5, 6, 7, 8}
+
 # /api/ocr/batch で一度に受け付ける最大枚数
 BATCH_MAX_FILES = 50
 
@@ -142,8 +145,8 @@ def run_ocr():
             logger.warning("OCR request rejected: unreadable image (file=%r)", file.filename)
             return jsonify(error="画像を読み込めません"), 400
 
-        # ブラウザ側の表示と座標を合わせるため、回転を反映してからOCRする（出力名は page のまま）
-        image_path = apply_exif_orientation(image_path)
+        # 回転を反映してからOCRする（出力名は page のまま）。反映した回転はヘッダーで返す
+        image_path, orientation = apply_exif_orientation(image_path)
 
         args = build_ocr_args(work_dir, sourceimg=image_path)
         try:
@@ -169,7 +172,9 @@ def run_ocr():
         len(xml_text),
         elapsed,
     )
-    return Response(xml_text, mimetype="application/xml; charset=utf-8")
+    response = Response(xml_text, mimetype="application/xml; charset=utf-8")
+    response.headers["X-Image-Orientation"] = str(orientation)
+    return response
 
 
 def is_readable_image(image_path):
@@ -187,15 +192,18 @@ def is_readable_image(image_path):
 
 
 def apply_exif_orientation(image_path):
-    """撮影時の回転情報（EXIF Orientation）を画素に反映し、OCRに使うパスを返す。
+    """撮影時の回転情報（EXIF Orientation）を画素に反映し、OCRに使うパスと反映した回転（1〜8）を返す。
 
     スマホの写真は画素を横倒しのまま保存し、回転情報だけを持つことがある。
-    ブラウザは回転情報を見て表示するが、process() は画素のまま読むため、
-    そのままだと OCR の座標が表示とずれる。回転が必要なときだけ PNG に書き直す。
+    process() は画素のまま読むため、文字の向きをそろえてからOCRする。回転が必要なときだけ PNG に書き直す。
+    ブラウザが回転情報を表示に使うかは形式によって違う（Chrome は WebP の回転情報を使わない）ため、
+    反映した回転を返し、ページ側は画像の回転情報を使わずに、この回転で表示する。
+    回転情報がない・値が不正なときは、何もせず 1 を返す。
     """
     with Image.open(image_path) as image:
-        if image.getexif().get(Base.Orientation, 1) == 1:
-            return image_path
+        orientation = image.getexif().get(Base.Orientation, 1)
+        if orientation not in EXIF_ORIENTATIONS:
+            return image_path, 1
 
         upright = ImageOps.exif_transpose(image).convert("RGB")
 
@@ -203,7 +211,7 @@ def apply_exif_orientation(image_path):
     upright.save(upright_path)
     if upright_path != image_path:
         os.remove(image_path)
-    return upright_path
+    return upright_path, orientation
 
 
 @app.post("/api/ocr/batch")
@@ -236,6 +244,7 @@ def run_ocr_batch():
 
         # 出力名は入力名から決まるため、連番の固定名で保存し、結果は index で対応づける
         accepted = []
+        orientations = {}
         for index, file in enumerate(files):
             extension = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
             if extension not in ALLOWED_EXTENSIONS:
@@ -252,8 +261,8 @@ def run_ocr_batch():
                 results.append({"index": index, "error": "画像を読み込めません"})
                 continue
 
-            # ブラウザ側の表示と座標を合わせるため、回転を反映してからOCRする
-            image_path = apply_exif_orientation(image_path)
+            # 回転を反映してからOCRする。反映した回転は結果の imginfo で返す
+            image_path, orientations[index] = apply_exif_orientation(image_path)
             accepted.append(index)
 
         process_error = None
@@ -294,6 +303,8 @@ def run_ocr_batch():
             imginfo = page_json["imginfo"]
             imginfo["img_name"] = files[index].filename
             imginfo.pop("img_path", None)
+            # ページ側は、この回転で画像を表示して座標を合わせる
+            imginfo["orientation"] = orientations[index]
             results.append({"index": index, "xml": xml_text, "json": page_json})
 
     results.sort(key=lambda result: result["index"])
