@@ -663,6 +663,10 @@ dialog::backdrop {
     color: #888;
 }
 
+.pageStatus.queued {
+    color: #b9a7ff;
+}
+
 .pageStatus.running {
     color: #ffd166;
 }
@@ -952,6 +956,28 @@ dialog::backdrop {
     display: none;
 
     font-size: 12px;
+}
+
+/* 見出しの右端に閉じるボタン（☓）を置く */
+
+#details .detailsHeader {
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+}
+
+#detailsClose {
+    padding: 0 7px;
+
+    border-color: #555;
+
+    background: transparent;
+
+    font-size: 14px;
+
+    line-height: 1.5;
 }
 
 #details pre {
@@ -1371,9 +1397,20 @@ dialog::backdrop {
 
 <div id="details">
 
-    <strong>
-        OCR情報
-    </strong>
+    <div class="detailsHeader">
+
+        <strong>
+            OCR情報
+        </strong>
+
+        <button
+            id="detailsClose"
+            type="button"
+            title="閉じる"
+            aria-label="OCR情報を閉じる"
+        >☓</button>
+
+    </div>
 
     <pre id="detailsText"></pre>
 
@@ -1462,6 +1499,9 @@ const details =
 
 const detailsText =
     document.getElementById("detailsText");
+
+const detailsClose =
+    document.getElementById("detailsClose");
 
 const dropMessage =
     document.getElementById("dropMessage");
@@ -1595,10 +1635,12 @@ function parseXML(source) {
 
 
     /*
-     * OCRクリア
+     * OCRクリア（前の結果のOCR情報も閉じる）
      */
 
     ocrLayer.innerHTML = "";
+
+    closeDetails();
 
 
     /*
@@ -1851,6 +1893,8 @@ function loadImage(file) {
 
         ocrLayer.innerHTML = "";
 
+        closeDetails();
+
         pageSizeFromXML = false;
 
     }
@@ -2062,6 +2106,36 @@ async function runOCR() {
 ocrButton.addEventListener(
     "click",
     runOCR
+);
+
+
+/* =========================
+   OCR情報を閉じる。選んでいた行の強調も外す
+   ☓ボタンのほか、OCR結果を消すとき（別の画像・別のページ・リセット・再表示）にも閉じる
+========================= */
+
+function closeDetails() {
+
+    details.style.display =
+        "none";
+
+    document
+        .querySelectorAll(
+            ".ocr-line.selected"
+        )
+        .forEach(el => {
+
+            el.classList.remove(
+                "selected"
+            );
+
+        });
+
+}
+
+detailsClose.addEventListener(
+    "click",
+    closeDetails
 );
 
 
@@ -2391,8 +2465,11 @@ let imageExtensions = loadImageExtensions();
 
 const RESULT_FILE_NAME = "ocr.json";
 
+/* queued は、一括OCRの対象で、まだ送っていない（順番を待っている）ページ */
+
 const STATUS_LABELS = {
     pending: "未処理",
+    queued: "待機中",
     running: "処理中",
     done: "完了",
     error: "失敗"
@@ -3120,7 +3197,8 @@ function updateBatchControls() {
 /*
  * OCR実行は、画像があり、その画像のOCRが動いていないときだけ押せる。
  * 一覧のページを開いているときは、一覧のOCR（一括・1ページ）が終わるまで押せない。
- * 一番上には状態を出さないので、開いている画像を処理している間はボタンに「処理中…」と出す
+ * 一番上には状態を出さないので、開いている画像を処理している間はボタンに「処理中…」、
+ * 一括OCRで順番を待っている間は「待機中…」と出す
  */
 
 function updateOCRButton() {
@@ -3139,7 +3217,9 @@ function updateOCRButton() {
     ocrButton.textContent =
         singleOCRRunning || (isListPage && current.status === "running")
             ? "処理中…"
-            : "▶ OCR実行";
+            : isListPage && current.status === "queued"
+                ? "待機中…"
+                : "▶ OCR実行";
 
 }
 
@@ -3185,9 +3265,15 @@ function updateBatchProgress() {
     }
 
 
+    /* 一括OCR中は、まだ順番を待っているページの数も出す */
+
+    const queued =
+        countBatchPages("queued");
+
     batchProgress.textContent =
         (stopRequested ? "停止中… " : "処理中… ")
-        + summary;
+        + summary
+        + (queued > 0 ? `・待機 ${queued} 件` : "");
 
 }
 
@@ -3920,10 +4006,6 @@ async function runBatchOCR(targetPages) {
 
     stopRequested = false;
 
-    updateBatchControls();
-
-    updateBatchProgress();
-
 
     /* 未処理と失敗したページを対象にする（停止後の再実行で続きから処理できる） */
 
@@ -3931,6 +4013,24 @@ async function runBatchOCR(targetPages) {
         targetPages.filter(batchPage =>
             batchPage.status !== "done"
         );
+
+
+    /* 対象のページは、送るまで「待機中」と出す。止めて送らなかったときに戻せるよう、元の状態を覚えておく */
+
+    const statusBeforeQueue = new Map(
+        targets.map(batchPage => [batchPage, batchPage.status])
+    );
+
+    targets.forEach(batchPage => {
+
+        batchPage.status = "queued";
+
+    });
+
+
+    updateBatchControls();
+
+    updateBatchProgress();
 
 
     for (const batch of makeBatches(targets)) {
@@ -3951,6 +4051,8 @@ async function runBatchOCR(targetPages) {
         });
 
         renderPageList();
+
+        updateBatchProgress();
 
 
         try {
@@ -4015,6 +4117,20 @@ async function runBatchOCR(targetPages) {
         }
 
     }
+
+
+    /* 停止して送らなかったページは、待機中から元の状態（未処理・失敗）に戻す */
+
+    targets.forEach(batchPage => {
+
+        if (batchPage.status === "queued") {
+
+            batchPage.status =
+                statusBeforeQueue.get(batchPage);
+
+        }
+
+    });
 
 
     /* 停止や失敗で残ったディレクトリも、配下が終わっていれば書く */
@@ -4425,6 +4541,8 @@ function showPage(index) {
     } else {
 
         ocrLayer.innerHTML = "";
+
+        closeDetails();
 
         /* 結果がないのでPAGEの大きさもない。画像の大きさで表示する（onload で合わせる） */
 
