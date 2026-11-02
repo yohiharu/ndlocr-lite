@@ -3,7 +3,8 @@
 #
 # 初回のみ uv の導入（未導入の場合）、仮想環境 .venv の作成、依存関係のインストールを行い、
 # 2回目以降はそのまま server.py を起動する（--open 指定時のみブラウザでページを開く）。
-# Python は uv が 3.10 以上のものを見つけ、無ければ取得するため、システムの Python 環境は問わない。
+# Python は uv が 3.10〜3.13 のものを見つけ、無ければ取得するため、システムの Python 環境は問わない。
+# （onnxruntime 1.23.2・numpy 2.2.2 などが 3.13 までの wheel しか出していないため、3.14 以降は使わない）
 #
 # 使い方:
 #     ./page/start.sh          # http://127.0.0.1:5000 で起動
@@ -19,7 +20,7 @@ VENV_DIR="$ROOT_DIR/.venv"
 VENV_PY="$VENV_DIR/bin/python"
 REQ_FILE="$ROOT_DIR/requirements.txt"
 DEPS_STAMP="$VENV_DIR/.deps-installed"
-PYTHON_SPEC=">=3.10"
+PYTHON_SPEC=">=3.10,<3.14"
 HOST="0.0.0.0"
 PORT="5000"
 OPEN_BROWSER=0
@@ -72,9 +73,13 @@ if ! command -v uv >/dev/null 2>&1; then
     command -v uv >/dev/null 2>&1 || die "uv の導入に失敗しました。"
 fi
 
-# 1. 仮想環境の作成（Python 3.10 以上を uv が用意する）
+# 1. 仮想環境の作成（Python 3.10〜3.13 を uv が用意する）
+# 既存の .venv の Python が対応範囲外（3.14 以降などで作られたもの）なら作り直す
 if [ ! -x "$VENV_PY" ]; then
     echo "[INFO] 仮想環境を作成します: $VENV_DIR"
+    uv venv --clear --python "$PYTHON_SPEC" "$VENV_DIR"
+elif ! "$VENV_PY" -c 'import sys; sys.exit(not ((3, 10) <= sys.version_info[:2] < (3, 14)))' 2>/dev/null; then
+    echo "[INFO] 仮想環境の Python（$("$VENV_PY" -V 2>&1)）は非対応のため作り直します: $VENV_DIR"
     uv venv --clear --python "$PYTHON_SPEC" "$VENV_DIR"
 fi
 
