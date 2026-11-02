@@ -24,22 +24,36 @@ HOST="0.0.0.0"
 PORT="5000"
 OPEN_BROWSER=0
 
-for arg in "$@"; do
-    case "$arg" in
-        --open) OPEN_BROWSER=1 ;;
-        --no-browser) OPEN_BROWSER=0 ;;
-        *) PORT="$arg" ;;
-    esac
-done
-
-# ブラウザで開くURL。フォルダの結果を書き込む機能はセキュアコンテキストが必要なため、
-# 0.0.0.0 ではなく 127.0.0.1 で開く
-URL="http://127.0.0.1:$PORT"
-
 die() {
     echo "[ERROR] $*" >&2
     exit 1
 }
+
+usage() {
+    echo "使い方: ./page/start.sh [ポート番号] [--open]"
+    echo "    ポート番号  待ち受けるポート（1〜65535、既定は 5000）"
+    echo "    --open      起動後にブラウザで開く"
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --open) OPEN_BROWSER=1 ;;
+        --no-browser) OPEN_BROWSER=0 ;;
+        -h|--help) usage; exit 0 ;;
+        -*) usage >&2; die "不明なオプションです: $arg" ;;
+        *) PORT="$arg" ;;
+    esac
+done
+
+# ポート番号は 1〜65535 の数字だけ受け付ける（桁数を先に見て、比較であふれないようにする）
+if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$((10#$PORT))" -lt 1 ] || [ "$((10#$PORT))" -gt 65535 ]; then
+    die "ポート番号は 1〜65535 の数字で指定してください: $PORT"
+fi
+PORT="$((10#$PORT))"
+
+# ブラウザで開くURL。フォルダの結果を書き込む機能はセキュアコンテキストが必要なため、
+# 0.0.0.0 ではなく 127.0.0.1 で開く
+URL="http://127.0.0.1:$PORT"
 
 cd "$ROOT_DIR"
 

@@ -21,15 +21,23 @@ body {
     background: #222;
 }
 
+/* ツールバーは折り返すので、高さは中身に合わせ、残りをメインに使う */
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
 /* =========================
    ツールバー
 ========================= */
 
 #toolbar {
-    height: 54px;
+    min-height: 54px;
     flex-shrink: 0;
 
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
 
@@ -39,6 +47,20 @@ body {
     color: white;
 
     border-bottom: 1px solid #444;
+}
+
+/* 幅が足りないときに、ボタンや文字が縦に潰れないよう、ツールバーの項目は縮めない（状態表示は除く） */
+
+#toolbar > :not(#status) {
+    flex-shrink: 0;
+}
+
+/* 透明度・拡大縮小の操作は、折り返すときも1かたまりで動く */
+
+.toolGroup {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 button,
@@ -81,12 +103,18 @@ label.button:hover {
     width: 40px;
 }
 
+/* 画像のパスなど長い文字列は、残りの幅で折り返す（ツールバーからはみ出さない） */
+
 #status {
     margin-left: auto;
+
+    min-width: 0;
 
     color: #aaa;
 
     font-size: 12px;
+
+    overflow-wrap: anywhere;
 }
 
 /* =========================
@@ -96,7 +124,7 @@ label.button:hover {
 #main {
     display: flex;
 
-    height: calc(100% - 54px);
+    flex: 1;
 
     min-height: 0;
 }
@@ -178,7 +206,8 @@ label.button:hover {
     font-size: 12px;
 }
 
-#extensionChips {
+#extensionChips,
+#kindChips {
     display: flex;
     flex-wrap: wrap;
 
@@ -221,7 +250,8 @@ label.button:hover {
     margin-top: 8px;
 }
 
-#extensionInput {
+#extensionInput,
+#kindInput {
     flex: 1;
 
     min-width: 0;
@@ -349,6 +379,7 @@ dialog::backdrop {
 
 .pageOCR,
 .folderOCR,
+.folderClassify,
 .folderReset {
     flex-shrink: 0;
 
@@ -359,6 +390,7 @@ dialog::backdrop {
 
 .pageOCR:disabled,
 .folderOCR:disabled,
+.folderClassify:disabled,
 .folderReset:disabled {
     opacity: .5;
 
@@ -407,6 +439,7 @@ dialog::backdrop {
 
 .folderItem {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
 
@@ -427,6 +460,18 @@ dialog::backdrop {
 
 .folderItem:hover {
     background: #2a2a2a;
+}
+
+/* フォルダの行のボタンは名前の下の行に並べる。名前の幅を狭めないように */
+
+.folderActions {
+    flex-basis: 100%;
+
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+
+    padding-left: 18px;
 }
 
 .folderCaret {
@@ -648,9 +693,14 @@ dialog::backdrop {
 
     margin: 30px;
 
-    background: white;
-
     transform-origin: top left;
+}
+
+/* 画像かOCR結果があるときだけ白い紙として出す。何も読み込んでいないときは出さない */
+
+#page:has(#backgroundImage.visible),
+#page:has(.ocr-line) {
+    background: white;
 
     box-shadow: 0 0 20px #000;
 }
@@ -747,12 +797,6 @@ dialog::backdrop {
 
 .ocr-line.horizontal {
     writing-mode: horizontal-tb;
-}
-
-/* デバッグ */
-
-.debug .ocr-line {
-    outline: 1px solid rgba(0, 100, 255, .6);
 }
 
 /* =========================
@@ -884,23 +928,31 @@ dialog::backdrop {
     <button id="ocrButton" disabled>
         OCR実行
     </button>
+    <!-- 種別判定中だけ出す。どのタブを開いていても止められるように、ツールバーに置く -->
+    <button id="classifyStopButton" hidden>
+        種別判定を止める
+    </button>
 
 
-    <span>
-        OCR透明度
-    </span>
+    <div class="toolGroup">
 
-    <input
-        id="opacity"
-        type="range"
-        min="0"
-        max="100"
-        value="100"
-    >
+        <span>
+            OCR透明度
+        </span>
 
-    <span id="opacityText">
-        100%
-    </span>
+        <input
+            id="opacity"
+            type="range"
+            min="0"
+            max="100"
+            value="100"
+        >
+
+        <span id="opacityText">
+            100%
+        </span>
+
+    </div>
 
 
     <button id="fitButton">
@@ -908,32 +960,29 @@ dialog::backdrop {
     </button>
 
 
-    <button id="minusButton">
-        −
-    </button>
+    <div class="toolGroup">
 
+        <button id="minusButton">
+            −
+        </button>
 
-    <input
-        id="zoom"
-        type="range"
-        min="10"
-        max="200"
-        value="30"
-    >
+        <input
+            id="zoom"
+            type="range"
+            min="10"
+            max="200"
+            value="30"
+        >
 
-    <span id="zoomText">
-        30%
-    </span>
+        <span id="zoomText">
+            30%
+        </span>
 
+        <button id="plusButton">
+            ＋
+        </button>
 
-    <button id="plusButton">
-        ＋
-    </button>
-
-
-    <button id="debugButton">
-        座標表示
-    </button>
+    </div>
 
 
     <span id="status">
@@ -1013,10 +1062,6 @@ dialog::backdrop {
                     種別判定を始める
                 </button>
 
-                <button id="classifyStopButton" hidden>
-                    止める
-                </button>
-
             </div>
 
 
@@ -1059,6 +1104,33 @@ dialog::backdrop {
                 </form>
 
                 <datalist id="extensionCandidates"></datalist>
+
+            </div>
+
+
+            <div class="extensionSettings">
+
+                <div>
+                    種別（ここで登録した種別をページに付けられます）
+                </div>
+
+                <div id="kindChips"></div>
+
+                <form id="kindForm" class="extensionForm">
+
+                    <input
+                        id="kindInput"
+                        placeholder="例: 挿絵"
+                        maxlength="12"
+                        autocomplete="off"
+                        spellcheck="false"
+                    >
+
+                    <button type="submit">
+                        登録
+                    </button>
+
+                </form>
 
             </div>
 
@@ -1283,13 +1355,20 @@ let imageFile = null;
    エラー表示
 ================================================== */
 
+/* 前のエラーのタイマーで、あとから出したエラーが早く消えないように、タイマーは1つだけにする */
+
+let errorTimer = null;
+
+
 function showError(message) {
 
     errorBox.textContent = message;
 
     errorBox.style.display = "block";
 
-    setTimeout(() => {
+    clearTimeout(errorTimer);
+
+    errorTimer = setTimeout(() => {
 
         errorBox.style.display = "none";
 
@@ -1636,7 +1715,10 @@ function loadImage(file) {
     }
 
 
-    /* 一覧のページ以外の画像を開いたら、そのページは表示していないことにする */
+    /*
+     * 一覧のページ以外の画像を開いたら、そのページは表示していないことにする。
+     * そのページのOCR結果と大きさは別の画像のものではないので消し、開いた画像の大きさで表示する
+     */
 
     const current =
         batchPages[currentPageIndex];
@@ -1644,6 +1726,14 @@ function loadImage(file) {
     if (current && current.file !== file) {
 
         currentPageIndex = -1;
+
+        ocrLayer.innerHTML = "";
+
+        xmlInput.value = "";
+
+        pageSizeFromXML = false;
+
+        status.textContent = "XML未入力";
 
         renderPageList();
 
@@ -2083,24 +2173,6 @@ document
 
 
 /* ==================================================
-   座標表示
-================================================== */
-
-document
-    .getElementById("debugButton")
-    .addEventListener(
-        "click",
-        () => {
-
-            document.body.classList.toggle(
-                "debug"
-            );
-
-        }
-    );
-
-
-/* ==================================================
    Ctrl + Enter
 ================================================== */
 
@@ -2198,18 +2270,36 @@ const STATUS_LABELS = {
 };
 
 /*
- * ページの種別。ページごとに選び、ocr.json に保存する。検索でこの種別に絞れる。
- * 最初はすべて未分類。種別のない結果（種別を入れる前に書いたもの）も未分類として扱う。
- * 並びは、種別を選ぶボタンに並ぶ順
+ * ページの種別。ページの画面で登録し、ページごとに選んで ocr.json に保存する。検索でこの種別に絞れる。
+ * 最初から用意した種別はない。登録した種別は、名前がそのまま ocr.json に入る値になり、登録した順で並ぶ。
+ * 登録した種別はこのブラウザに保存する
  */
 
-const PAGE_KIND_LABELS = {
-    unclassified: "未分類",
+const PAGE_KIND_LABELS = {};
+
+/*
+ * 種別を付けていないページの値。最初はすべてこれ。
+ * 前の版で書いた ocr.json の "unclassified" や、種別のない結果も、種別なしとして読む
+ */
+
+const DEFAULT_PAGE_KIND = "unclassified";
+
+/* 前の版で最初から用意していた種別。結果に残っていたら、この名前の種別として登録して読む */
+
+const LEGACY_PAGE_KINDS = {
     classic: "古典籍",
     metadata: "メタデータ"
 };
 
-const DEFAULT_PAGE_KIND = "unclassified";
+const PAGE_KINDS_KEY = "ocrViewer.pageKinds";
+
+const PAGE_KIND_NAME_MAX = 12;
+
+loadCustomPageKinds().forEach(name => {
+
+    PAGE_KIND_LABELS[name] = name;
+
+});
 
 const folderButton =
     document.getElementById("folderButton");
@@ -2222,6 +2312,15 @@ const extensionForm =
 
 const extensionInput =
     document.getElementById("extensionInput");
+
+const kindChips =
+    document.getElementById("kindChips");
+
+const kindForm =
+    document.getElementById("kindForm");
+
+const kindInput =
+    document.getElementById("kindInput");
 
 const extensionCandidates =
     document.getElementById("extensionCandidates");
@@ -2299,7 +2398,7 @@ let batchRunning = false;
 
 let pageOCRRunning = false;
 
-/* 種別判定：開始時に未分類だったページ（classifyQueue）と、表示中の位置 */
+/* 種別判定：開始時に種別なしだったページ（classifyQueue）と、表示中の位置 */
 
 let classifyQueue = [];
 
@@ -2307,7 +2406,15 @@ let classifyPosition = -1;
 
 let classifyRunning = false;
 
+/* 種別判定の対象のフォルダのパス（例: 資料/1巻）。全体を対象にしたときは空 */
+
+let classifyFolder = "";
+
 let stopRequested = false;
+
+/* 送信中のOCR要求。停止ボタンで中断するために持つ（送信していないときは null） */
+
+let activeRequest = null;
 
 
 /*
@@ -2495,11 +2602,322 @@ function isImageName(name) {
 
 function normalizePageKind(kind) {
 
-    /* 保存されている値が知らない種別なら、既定の種別にする */
+    if (kind === DEFAULT_PAGE_KIND || Object.hasOwn(PAGE_KIND_LABELS, kind)) {
 
-    return Object.hasOwn(PAGE_KIND_LABELS, kind)
-        ? kind
-        : DEFAULT_PAGE_KIND;
+        return kind;
+
+    }
+
+    /* 前の版の種別（classic など）は、その日本語の名前の種別として読む */
+
+    const name =
+        Object.hasOwn(LEGACY_PAGE_KINDS, kind)
+            ? LEGACY_PAGE_KINDS[kind]
+            : kind;
+
+    if (Object.hasOwn(PAGE_KIND_LABELS, name)) {
+
+        return name;
+
+    }
+
+    /* 未登録の種別（ほかのブラウザで登録したものなど）は、結果から消えないようにここで登録する */
+
+    if (typeof name === "string" && pageKindNameError(name) === "") {
+
+        registerPageKind(name);
+
+        return name;
+
+    }
+
+    /* 種別のない結果や、種別に使えない値は、種別なしにする */
+
+    return DEFAULT_PAGE_KIND;
+
+}
+
+
+/* 種別の名前として使えないときは、その理由。使えるときは空 */
+
+function pageKindNameError(name) {
+
+    if (name === "") {
+
+        return "種別の名前を入力してください";
+
+    }
+
+    if (name.length > PAGE_KIND_NAME_MAX) {
+
+        return `種別の名前は${PAGE_KIND_NAME_MAX}文字までです`;
+
+    }
+
+    /*
+     * 数字だけの名前は並びが変わり、__proto__ などは種別の表に入れられないので使わない。
+     * 種別なしの値や、前の版の種別の値とも重ならないようにする
+     */
+
+    if (
+        /^\d+$/.test(name)
+        || Object.hasOwn(Object.prototype, name)
+        || name === DEFAULT_PAGE_KIND
+        || Object.hasOwn(LEGACY_PAGE_KINDS, name)
+    ) {
+
+        return `「${name}」は種別の名前に使えません`;
+
+    }
+
+    if (Object.hasOwn(PAGE_KIND_LABELS, name)) {
+
+        return `「${name}」はすでにあります`;
+
+    }
+
+    return "";
+
+}
+
+
+function loadCustomPageKinds() {
+
+    try {
+
+        const saved =
+            JSON.parse(
+                localStorage.getItem(PAGE_KINDS_KEY)
+            );
+
+        if (Array.isArray(saved)) {
+
+            return saved.filter(name =>
+                typeof name === "string"
+                && pageKindNameError(name) === ""
+            );
+
+        }
+
+    } catch (error) {
+
+        /* 保存を読めないときは、既定の種別だけにする */
+
+    }
+
+    return [];
+
+}
+
+
+function saveCustomPageKinds() {
+
+    try {
+
+        localStorage.setItem(
+            PAGE_KINDS_KEY,
+            JSON.stringify(
+                Object.keys(PAGE_KIND_LABELS)
+            )
+        );
+
+    } catch (error) {
+
+        /* 保存できなくても、このページを開いているあいだは登録した種別を使える */
+
+    }
+
+}
+
+
+/* 種別を足して保存し、種別を選ぶところを作り直す */
+
+function registerPageKind(name) {
+
+    PAGE_KIND_LABELS[name] = name;
+
+    saveCustomPageKinds();
+
+    renderPageKindControls();
+
+}
+
+
+function addPageKind(text) {
+
+    const name =
+        text.trim();
+
+    const error =
+        pageKindNameError(name);
+
+    if (error) {
+
+        showError(error);
+
+        return;
+
+    }
+
+    registerPageKind(name);
+
+    /* 一覧の種別の選択にも出す */
+
+    renderPageList();
+
+    kindInput.value = "";
+
+}
+
+
+/* 登録した種別を外す。その種別のページがあるときは、種別が消えないように外さない */
+
+function removePageKind(kind) {
+
+    const count =
+        batchPages.filter(batchPage =>
+            batchPage.kind === kind
+        ).length;
+
+    if (count > 0) {
+
+        showError(
+            `「${kind}」のページが ${count} 件あるので外せません。先にそのページの種別を変えてください`
+        );
+
+        return;
+
+    }
+
+    delete PAGE_KIND_LABELS[kind];
+
+    saveCustomPageKinds();
+
+    renderPageKindControls();
+
+    renderPageList();
+
+}
+
+
+/*
+ * 種別を選ぶところ（検索の種別、表示中のページの種別ボタン、登録した種別の一覧）を、
+ * いまの種別に合わせて作り直す
+ */
+
+function renderPageKindControls() {
+
+    /* 検索の種別は、外していたチェックはそのまま。新しい種別は付けて出す（最初はすべて検索する） */
+
+    const checked = new Map(
+        [...searchKinds.querySelectorAll("input")].map(checkbox =>
+            [checkbox.value, checkbox.checked]
+        )
+    );
+
+    /* 種別を付けていないページも絞り込めるように、最後に「種別なし」を出す */
+
+    searchKinds.replaceChildren(
+        ...[...Object.entries(PAGE_KIND_LABELS), [DEFAULT_PAGE_KIND, "種別なし"]].map(([kind, label]) => {
+
+            const checkbox =
+                document.createElement("input");
+
+            checkbox.type = "checkbox";
+
+            checkbox.value = kind;
+
+            checkbox.checked = checked.get(kind) ?? true;
+
+            const item =
+                document.createElement("label");
+
+            item.append(checkbox, label);
+
+            return item;
+
+        })
+    );
+
+    kindOverlay.replaceChildren(
+        ...Object.entries(PAGE_KIND_LABELS).map(([kind, label]) => {
+
+            const button =
+                document.createElement("button");
+
+            button.type = "button";
+
+            button.textContent = label;
+
+            button.dataset.kind = kind;
+
+            button.addEventListener(
+                "click",
+                () => {
+
+                    /* 種別判定中は、種別を付けて次の種別なしのページへ進む */
+
+                    if (classifyRunning) {
+
+                        classifyDisplayed(kind);
+
+                        return;
+                    }
+
+
+                    const batchPage =
+                        batchPages[currentPageIndex];
+
+                    /* 付いている種別をもう一度押すと、種別を外す */
+
+                    if (batchPage) {
+
+                        changePageKind(
+                            batchPage,
+                            batchPage.kind === kind ? DEFAULT_PAGE_KIND : kind
+                        );
+
+                    }
+
+                }
+            );
+
+            return button;
+
+        })
+    );
+
+    kindChips.replaceChildren(
+        ...Object.keys(PAGE_KIND_LABELS)
+            .map(kind => {
+
+                const chip =
+                    document.createElement("span");
+
+                chip.className = "extensionChip";
+
+                const remove =
+                    document.createElement("button");
+
+                remove.type = "button";
+                remove.textContent = "×";
+                remove.title = `${kind} を外す`;
+
+                remove.addEventListener(
+                    "click",
+                    () => removePageKind(kind)
+                );
+
+                chip.append(kind, remove);
+
+                return chip;
+
+            })
+    );
+
+    /* 作り直した種別ボタンに、表示中のページの種別を反映する */
+
+    renderKindOverlay();
 
 }
 
@@ -2530,8 +2948,10 @@ function updateBatchControls() {
         isOCRBusy()
         || batchPages.length === 0;
 
+    /* 停止は、一括OCRのほか、1ページだけのOCR中も使える */
+
     stopButton.disabled =
-        !batchRunning;
+        !isOCRBusy();
 
     /* 判定中は「次へ」になり、止めるのは別のボタン（Esc でも止められる） */
 
@@ -2578,7 +2998,7 @@ function updateBatchProgress() {
             : `完了 ${done} / ${batchPages.length} 件（失敗 ${failed} 件）・結果保存 ${saved} / ${batchDirectories.length} フォルダ`;
 
 
-    if (!batchRunning) {
+    if (!isOCRBusy()) {
 
         batchProgress.textContent =
             summary;
@@ -2592,6 +3012,14 @@ function updateBatchProgress() {
         + summary;
 
 
+    /* 1ページだけのOCR中は、表示中のページの「OCR処理中…」を上書きしない */
+
+    if (!batchRunning) {
+
+        return;
+    }
+
+
     /* ツールバーには、ページを表示していなくても進捗が見えるように出す */
 
     status.textContent =
@@ -2602,7 +3030,7 @@ function updateBatchProgress() {
 
 /*
  * フォルダの階層を作る。画像のないフォルダは、配下に画像があれば中間のフォルダとして出る。
- * batchPages は読み順（フォルダ内の画像 → 配下のフォルダ）に並んでいるので、
+ * batchPages は一覧と同じ順（配下のフォルダ → フォルダ内の画像）に並んでいるので、
  * フォルダも見つかった順に並ぶ
  */
 
@@ -2655,13 +3083,13 @@ function buildPageTree() {
 }
 
 
-/* フォルダの中のページ（サブフォルダのページも含む） */
+/* フォルダの中のページ（サブフォルダのページも含む）。一覧と同じく、サブフォルダのページが先 */
 
 function pagesUnder(node) {
 
     return [
-        ...node.pages.map(({ batchPage }) => batchPage),
-        ...[...node.folders.values()].flatMap(pagesUnder)
+        ...[...node.folders.values()].flatMap(pagesUnder),
+        ...node.pages.map(({ batchPage }) => batchPage)
     ];
 
 }
@@ -2698,7 +3126,7 @@ function createRowButton(label, className, disabled, run) {
 }
 
 
-/* フォルダ配下（サブフォルダを含む）のページ数と、完了したページ数 */
+/* フォルダ配下（サブフォルダを含む）のページ数と、完了したページ数、種別なしのページ数 */
 
 function countFolderPages(folder) {
 
@@ -2707,6 +3135,11 @@ function countFolderPages(folder) {
     let done =
         folder.pages.filter(({ batchPage }) =>
             batchPage.status === "done"
+        ).length;
+
+    let unclassified =
+        folder.pages.filter(({ batchPage }) =>
+            batchPage.kind === DEFAULT_PAGE_KIND
         ).length;
 
 
@@ -2719,10 +3152,12 @@ function countFolderPages(folder) {
 
         done += count.done;
 
+        unclassified += count.unclassified;
+
     });
 
 
-    return { total, done };
+    return { total, done, unclassified };
 
 }
 
@@ -2793,10 +3228,12 @@ function appendFolderContents(node, depth) {
 
         /* OCR は、このフォルダ配下の未処理・失敗したページだけを対象にする */
 
-        item.append(
-            caret,
-            name,
-            summary,
+        const actions =
+            document.createElement("div");
+
+        actions.className = "folderActions";
+
+        actions.append(
             createRowButton(
                 "OCR",
                 "folderOCR",
@@ -2804,12 +3241,18 @@ function appendFolderContents(node, depth) {
                 () => runBatchOCR(pagesUnder(folder))
             ),
             createRowButton(
+                "種別判定",
+                "folderClassify",
+                isOCRBusy() || classifyRunning || count.unclassified === 0,
+                () => startClassify(pagesUnder(folder), folder.key)
+            ),
+            createRowButton(
                 "種別リセット",
                 "folderReset",
                 isOCRBusy(),
                 () => resetKinds(
                     pagesUnder(folder),
-                    `「${folder.key}」の中のページの種別を未分類に戻します。よろしいですか？`
+                    `「${folder.key}」の中のページの種別を外します。よろしいですか？`
                 )
             ),
             createRowButton(
@@ -2821,6 +3264,13 @@ function appendFolderContents(node, depth) {
                     `「${folder.key}」の中のページのOCR結果を消します（種別は残します）。よろしいですか？`
                 )
             )
+        );
+
+        item.append(
+            caret,
+            name,
+            summary,
+            actions
         );
 
         item.addEventListener(
@@ -2958,9 +3408,13 @@ function renderKindOverlay() {
     const batchPage =
         batchPages[currentPageIndex];
 
-    kindOverlay.hidden = !batchPage;
+    /* 種別を1つも登録していないときは、選ぶものがないので出さない */
 
-    if (!batchPage) {
+    kindOverlay.hidden =
+        !batchPage
+        || Object.keys(PAGE_KIND_LABELS).length === 0;
+
+    if (kindOverlay.hidden) {
 
         return;
 
@@ -2986,9 +3440,14 @@ function renderKindOverlay() {
 
 function makeKindOptions() {
 
-    return Object.entries(PAGE_KIND_LABELS).map(([value, label]) =>
-        new Option(label, value)
-    );
+    /* 種別なしは、空の選択肢にする */
+
+    return [
+        new Option("", DEFAULT_PAGE_KIND),
+        ...Object.entries(PAGE_KIND_LABELS).map(([value, label]) =>
+            new Option(label, value)
+        )
+    ];
 
 }
 
@@ -3166,6 +3625,22 @@ async function requestBatchOCR(batch) {
     });
 
 
+    /* 停止のとき、この要求を中断し、サーバーにも同じ識別子で残りを止めるよう伝える */
+
+    const jobId =
+        `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    formData.append(
+        "job",
+        jobId
+    );
+
+    const controller =
+        new AbortController();
+
+    activeRequest = { controller, jobId };
+
+
     let response;
 
     try {
@@ -3175,11 +3650,18 @@ async function requestBatchOCR(batch) {
                 "api/ocr/batch",
                 {
                     method: "POST",
-                    body: formData
+                    body: formData,
+                    signal: controller.signal
                 }
             );
 
     } catch (error) {
+
+        if (error.name === "AbortError") {
+
+            throw error;
+
+        }
 
         throw new Error(
             "OCRサーバーに接続できません。page/server.py を起動し、http://127.0.0.1:5000 から開いてください"
@@ -3300,14 +3782,30 @@ async function runBatchOCR(targetPages) {
 
         } catch (error) {
 
+            /* 停止で中断したページは、失敗ではなく未処理に戻す（続きから再実行できる） */
+
+            const aborted =
+                error.name === "AbortError";
+
             batch.forEach(batchPage => {
 
-                batchPage.status = "error";
-                batchPage.error = error.message;
+                batchPage.status =
+                    aborted ? "pending" : "error";
+
+                batchPage.error =
+                    aborted ? "" : error.message;
 
             });
 
-            showError(error.message);
+            if (!aborted) {
+
+                showError(error.message);
+
+            }
+
+        } finally {
+
+            activeRequest = null;
 
         }
 
@@ -3382,6 +3880,10 @@ async function runPageOCR(batchPage) {
 
     pageOCRRunning = true;
 
+    /* 前の一括OCRを止めたままでも、このOCRの表示が「停止中」にならないように戻す */
+
+    stopRequested = false;
+
     batchPage.status = "running";
 
     batchPage.error = "";
@@ -3407,14 +3909,26 @@ async function runPageOCR(batchPage) {
 
     } catch (error) {
 
-        batchPage.status = "error";
-        batchPage.error = error.message;
+        /* 停止で中断したときは、失敗ではなく未処理に戻す */
 
-        showError(error.message);
+        if (error.name === "AbortError") {
+
+            batchPage.status = "pending";
+
+        } else {
+
+            batchPage.status = "error";
+            batchPage.error = error.message;
+
+            showError(error.message);
+
+        }
 
     } finally {
 
         pageOCRRunning = false;
+
+        activeRequest = null;
 
     }
 
@@ -3460,26 +3974,58 @@ async function runPageOCR(batchPage) {
 
 
 /*
- * 種別判定：未分類のページを順に表示し、キーで種別を付けていく。
- * 1: 古典籍、2: メタデータ、→: 分類せずに次へ、Esc: 止める
+ * 種別判定：種別のないページを順に表示し、キーで種別を付けていく。
+ * 数字キー（1〜9）: 登録した順の種別、→: 分類せずに次へ、Esc: 止める
+ * 対象は全体、またはフォルダの中のページ（フォルダの行の「種別判定」）
  */
 
-const CLASSIFY_KEYS = {
-    "1": "classic",
-    "2": "metadata"
-};
+/* 数字キーに対応する種別（登録した順に 1〜9）。対応する種別がなければ空 */
 
+function classifyKindOfKey(key) {
+
+    const index =
+        /^[1-9]$/.test(key) ? Number(key) - 1 : -1;
+
+    return Object.keys(PAGE_KIND_LABELS)[index] ?? "";
+
+}
+
+
+/* 判定中の表示に出す、数字キーの説明（例: 1: 挿絵　2: 図版） */
+
+function classifyKeyGuide() {
+
+    return Object.keys(PAGE_KIND_LABELS)
+        .slice(0, 9)
+        .map((kind, index) => `${index + 1}: ${PAGE_KIND_LABELS[kind]}`)
+        .join("　");
+
+}
+
+
+/* 判定の対象（classifyQueue）のうち、まだ種別なしのページの数 */
 
 function countUnclassified() {
 
-    return batchPages.filter(batchPage =>
+    return classifyQueue.filter(batchPage =>
         batchPage.kind === DEFAULT_PAGE_KIND
     ).length;
 
 }
 
 
-/* 位置 from 以降で、まだ未分類のページの位置。なければ -1 */
+/* 表示に使う判定の名前。フォルダを対象にしたときは、そのパスを付ける */
+
+function classifyTitle() {
+
+    return classifyFolder
+        ? `「${classifyFolder}」の種別判定`
+        : "種別判定";
+
+}
+
+
+/* 位置 from 以降で、まだ種別なしのページの位置。なければ -1 */
 
 function findPendingClassify(from) {
 
@@ -3507,9 +4053,24 @@ function showClassifyBar(text) {
 }
 
 
-function startClassify() {
+/* targetPages のうち、種別なしのページを順に判定する。folderKey は対象のフォルダ（全体のときは空） */
 
-    classifyQueue = batchPages.filter(batchPage =>
+function startClassify(targetPages, folderKey = "") {
+
+    /* 付ける種別がないと判定できないので、先に登録してもらう */
+
+    if (Object.keys(PAGE_KIND_LABELS).length === 0) {
+
+        showError(
+            "種別を登録してから、種別判定を始めてください"
+        );
+
+        return;
+    }
+
+    classifyFolder = folderKey;
+
+    classifyQueue = targetPages.filter(batchPage =>
         batchPage.kind === DEFAULT_PAGE_KIND
     );
 
@@ -3526,6 +4087,8 @@ function startClassify() {
 
     updateBatchControls();
 
+    renderPageList();
+
     showClassifyPage(0);
 
 }
@@ -3540,13 +4103,13 @@ function showClassifyPage(position) {
     );
 
     showClassifyBar(
-        `種別判定中 ・ 残り ${countUnclassified()} 件 ・ 1: 古典籍　2: メタデータ　→: 後で　Esc: 止める`
+        `${classifyTitle()}中 ・ 残り ${countUnclassified()} 件 ・ ${classifyKeyGuide()}　→: 後で　Esc: 止める`
     );
 
 }
 
 
-/* 次の未分類のページへ。残りがなければ判定を終える */
+/* 次の種別なしのページへ。残りがなければ判定を終える */
 
 function advanceClassify() {
 
@@ -3601,7 +4164,7 @@ function classifyDisplayed(kind) {
 }
 
 
-/* 判定が終わったときの表示。未分類が残っていれば、その件数も出す */
+/* 判定が終わったときの表示。種別なしが残っていれば、その件数も出す */
 
 function finishedClassifyText() {
 
@@ -3609,8 +4172,8 @@ function finishedClassifyText() {
         countUnclassified();
 
     return remaining === 0
-        ? "種別判定が終わりました。未分類のページはありません"
-        : `種別判定が終わりました。未分類のページが ${remaining} 件残っています`;
+        ? `${classifyTitle()}が終わりました。種別のないページはありません`
+        : `${classifyTitle()}が終わりました。種別のないページが ${remaining} 件残っています`;
 
 }
 
@@ -3620,6 +4183,8 @@ function finishClassify() {
     classifyRunning = false;
 
     updateBatchControls();
+
+    renderPageList();
 
     showClassifyBar(
         finishedClassifyText()
@@ -3635,6 +4200,8 @@ function stopClassify() {
     classifyBar.hidden = true;
 
     updateBatchControls();
+
+    renderPageList();
 
 }
 
@@ -3717,7 +4284,9 @@ function compareNames(a, b) {
 
 /*
  * ディレクトリ内の画像と、配下のディレクトリを再帰的に読む。
- * 画像のあるディレクトリは scan.directories に入れる（そのディレクトリ直下に結果を書くため）
+ * 画像のあるディレクトリは scan.directories に入れる（そのディレクトリ直下に結果を書くため）。
+ * ページは一覧の表示と同じ順（配下のフォルダ → フォルダ内の画像）に並べる。
+ * 一括OCR・種別判定・検索の結果はこの順に進む
  */
 
 async function scanDirectory(dirHandle, path, scan) {
@@ -3760,6 +4329,17 @@ async function scanDirectory(dirHandle, path, scan) {
     subdirHandles.sort(compareNames);
 
 
+    for (const subdirHandle of subdirHandles) {
+
+        await scanDirectory(
+            subdirHandle,
+            `${path}/${subdirHandle.name}`,
+            scan
+        );
+
+    }
+
+
     if (fileHandles.length > 0) {
 
         const directory = {
@@ -3791,17 +4371,6 @@ async function scanDirectory(dirHandle, path, scan) {
         }
 
         scan.directories.push(directory);
-
-    }
-
-
-    for (const subdirHandle of subdirHandles) {
-
-        await scanDirectory(
-            subdirHandle,
-            `${path}/${subdirHandle.name}`,
-            scan
-        );
 
     }
 
@@ -4201,7 +4770,7 @@ async function saveDirectoriesOf(targetPages) {
 }
 
 
-/* 対象のページの種別を未分類に戻す（対象は、全体または1つのフォルダの中のページ） */
+/* 対象のページの種別を種別なしに戻す（対象は、全体または1つのフォルダの中のページ） */
 
 async function resetKinds(targetPages, message) {
 
@@ -4310,72 +4879,7 @@ extensionCandidates.replaceChildren(
     })
 );
 
-searchKinds.replaceChildren(
-    ...Object.entries(PAGE_KIND_LABELS).map(([kind, label]) => {
-
-        const checkbox =
-            document.createElement("input");
-
-        checkbox.type = "checkbox";
-
-        checkbox.value = kind;
-
-        /* 最初はすべての種別を検索する */
-
-        checkbox.checked = true;
-
-        const item =
-            document.createElement("label");
-
-        item.append(checkbox, label);
-
-        return item;
-
-    })
-);
-
-kindOverlay.replaceChildren(
-    ...Object.entries(PAGE_KIND_LABELS).map(([kind, label]) => {
-
-        const button =
-            document.createElement("button");
-
-        button.type = "button";
-
-        button.textContent = label;
-
-        button.dataset.kind = kind;
-
-        button.addEventListener(
-            "click",
-            () => {
-
-                /* 種別判定中は、種別を付けて次の未分類のページへ進む */
-
-                if (classifyRunning) {
-
-                    classifyDisplayed(kind);
-
-                    return;
-                }
-
-
-                const batchPage =
-                    batchPages[currentPageIndex];
-
-                if (batchPage && batchPage.kind !== kind) {
-
-                    changePageKind(batchPage, kind);
-
-                }
-
-            }
-        );
-
-        return button;
-
-    })
-);
+renderPageKindControls();
 
 extensionForm.addEventListener(
     "submit",
@@ -4384,6 +4888,17 @@ extensionForm.addEventListener(
         event.preventDefault();
 
         addImageExtension(extensionInput.value);
+
+    }
+);
+
+kindForm.addEventListener(
+    "submit",
+    event => {
+
+        event.preventDefault();
+
+        addPageKind(kindInput.value);
 
     }
 );
@@ -4405,7 +4920,7 @@ classifyButton.addEventListener(
     "click",
     () => {
 
-        /* 判定中は、分類せずに次の未分類へ進む */
+        /* 判定中は、分類せずに次の種別なしへ進む */
 
         if (classifyRunning) {
 
@@ -4413,7 +4928,7 @@ classifyButton.addEventListener(
 
         } else {
 
-            startClassify();
+            startClassify(batchPages);
 
         }
 
@@ -4425,7 +4940,7 @@ resetKindButton.addEventListener(
     "click",
     () => resetKinds(
         batchPages,
-        "すべてのページの種別を「未分類」に戻します。よろしいですか？"
+        "すべてのページの種別を外します。よろしいですか？"
     )
 );
 
@@ -4451,36 +4966,41 @@ document.addEventListener(
     "keydown",
     event => {
 
-        if (!classifyRunning || event.ctrlKey || event.metaKey || event.altKey) {
+        if (!classifyRunning || event.ctrlKey || event.metaKey || event.altKey || reuseDialog.open) {
 
             return;
         }
 
-        if (
-            (event.target instanceof Element && event.target.matches("input, textarea, select"))
-            || reuseDialog.open
-        ) {
+        /* Esc は、一覧の種別選択や入力欄にフォーカスがあっても止められるようにする */
 
-            return;
-        }
-
-        if (Object.hasOwn(CLASSIFY_KEYS, event.key)) {
+        if (event.key === "Escape") {
 
             event.preventDefault();
 
-            classifyDisplayed(CLASSIFY_KEYS[event.key]);
+            stopClassify();
+
+            return;
+        }
+
+        if (event.target instanceof Element && event.target.matches("input, textarea, select")) {
+
+            return;
+        }
+
+        const kind =
+            classifyKindOfKey(event.key);
+
+        if (kind) {
+
+            event.preventDefault();
+
+            classifyDisplayed(kind);
 
         } else if (event.key === "ArrowRight") {
 
             event.preventDefault();
 
             advanceClassify();
-
-        } else if (event.key === "Escape") {
-
-            event.preventDefault();
-
-            stopClassify();
 
         }
 
@@ -4493,6 +5013,32 @@ stopButton.addEventListener(
     () => {
 
         stopRequested = true;
+
+        /* 送信中のOCRは待たずに中断し、サーバーにも残りの画像を処理しないよう伝える */
+
+        if (activeRequest) {
+
+            activeRequest.controller.abort();
+
+            const cancelForm =
+                new FormData();
+
+            cancelForm.append(
+                "job",
+                activeRequest.jobId
+            );
+
+            /* 届かなくても、画面はすでに中断している */
+
+            fetch(
+                "api/ocr/cancel",
+                {
+                    method: "POST",
+                    body: cancelForm
+                }
+            ).catch(() => {});
+
+        }
 
         updateBatchProgress();
 
@@ -4511,36 +5057,61 @@ function normalizeForSearch(text) {
 
     /*
      * key: 検索用の文字列（NFKC・小文字・空白なし）
-     * origin: key の各文字が text の何文字目（コードポイント）か
+     * origin / originEnd: key の各文字が text の何文字目から何文字目の手前まで（コードポイント）か
+     *
+     * 濁点・半濁点（半角カナの ﾞ ﾟ や結合文字）は前の文字と一緒に正規化する。
+     * 1文字ずつだと ｶﾞ が「カ＋結合濁点」になり、ガ と一致しないため
      */
 
     let key = "";
 
     const origin = [];
 
+    const originEnd = [];
 
-    [...text].forEach((char, index) => {
+    const chars = [...text];
+
+
+    let index = 0;
+
+    while (index < chars.length) {
+
+        let end = index + 1;
+
+        while (
+            end < chars.length
+            && /[\p{M}ﾞﾟ]/u.test(chars[end])
+        ) {
+            end++;
+        }
+
 
         const normalized =
-            char.normalize("NFKC")
+            chars.slice(index, end)
+                .join("")
+                .normalize("NFKC")
                 .toLowerCase();
 
-        if (/\s/.test(normalized)) {
-            return;
+        if (!/\s/.test(normalized)) {
+
+            key += normalized;
+
+            for (let i = 0; i < normalized.length; i++) {
+
+                origin.push(index);
+
+                originEnd.push(end);
+
+            }
+
         }
 
-        key += normalized;
+        index = end;
 
-        for (let i = 0; i < normalized.length; i++) {
-
-            origin.push(index);
-
-        }
-
-    });
+    }
 
 
-    return { key, origin };
+    return { key, origin, originEnd };
 
 }
 
@@ -4594,6 +5165,7 @@ function buildSearchData(source) {
             index: line.index,
             chars: [...line.text],
             origin: normalized.origin,
+            originEnd: normalized.originEnd,
             start: key.length,
             length: normalized.key.length
         };
@@ -4635,7 +5207,7 @@ function makeHit(pageIndex, searchData, start, end) {
             return {
                 chars: line.chars,
                 startChar: line.origin[from],
-                endChar: line.origin[to - 1] + 1
+                endChar: line.originEnd[to - 1]
             };
 
         });
@@ -4791,8 +5363,12 @@ function renderSearchResults(hits) {
 
         name.className = "listName";
 
+        /* 種別なしのページは、名前だけを出す */
+
         name.textContent =
-            `${batchPage.name}（${PAGE_KIND_LABELS[batchPage.kind]}）`;
+            batchPage.kind === DEFAULT_PAGE_KIND
+                ? batchPage.name
+                : `${batchPage.name}（${PAGE_KIND_LABELS[batchPage.kind]}）`;
 
 
         const text =

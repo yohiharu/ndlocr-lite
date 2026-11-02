@@ -1241,8 +1241,12 @@ def process(args):
     recognizer50=get_recognizer(args=args,weights_path=args.rec_weights50)
     tatelinecnt=0
     alllinecnt=0
-    
+    # 中断の確認は画像と画像の間で行う（ページ用サーバーの停止ボタンで使う）
+    is_cancelled=getattr(args,"is_cancelled",None)
+
     for inputpath in inputpathlist:
+        if is_cancelled is not None and is_cancelled():
+            break
         ext=inputpath.split(".")[-1]
         pil_image = Image.open(inputpath).convert('RGB')
         img = np.array(pil_image)

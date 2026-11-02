@@ -42,15 +42,56 @@ BATCH_MAX_FILES = 50
 # OCRモデルは同時に1処理ずつ実行する
 ocr_lock = threading.Lock()
 
+# 実行中の /api/ocr/batch ごとの中断フラグ（ジョブID → Event）。停止ボタンは /api/ocr/cancel で立てる
+cancel_lock = threading.Lock()
+cancel_events = {}
+
+# 実行中でないジョブに届いた停止（ジョブID → 受け付けた時刻）。
+# 処理の開始より先に届いた停止を、開始したときに反映するために持つ。
+# 終わったジョブや始まらなかったジョブへの停止も入るので、PENDING_CANCEL_SECONDS を過ぎたら捨てる
+pending_cancels = {}
+PENDING_CANCEL_SECONDS = 60
+
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 
 
-def build_ocr_args(output_dir, sourceimg=None, sourcedir=None):
+def start_cancel_event(job_id):
+    """ジョブの中断フラグを作る。開始より先に停止が届いていたら、立てた状態で返す。"""
+    with cancel_lock:
+        event = threading.Event()
+        if pending_cancels.pop(job_id, None) is not None:
+            event.set()
+        cancel_events[job_id] = event
+        return event
+
+
+def release_cancel_event(job_id):
+    with cancel_lock:
+        cancel_events.pop(job_id, None)
+
+
+def request_cancel(job_id):
+    """実行中のジョブなら中断フラグを立てる。実行中でなければ、開始したときに止まるよう覚えておく。"""
+    now = time.monotonic()
+    with cancel_lock:
+        event = cancel_events.get(job_id)
+        if event is not None:
+            event.set()
+            return
+
+        for stale_id, requested_at in list(pending_cancels.items()):
+            if now - requested_at > PENDING_CANCEL_SECONDS:
+                del pending_cancels[stale_id]
+        pending_cancels[job_id] = now
+
+
+def build_ocr_args(output_dir, sourceimg=None, sourcedir=None, is_cancelled=None):
     """src/ocr.py の process() に渡す引数を作る。
 
     1枚なら sourceimg、フォルダ内の画像をまとめて処理するなら sourcedir を指定する。
     モデルのパスはカレントディレクトリに依存しないよう絶対パスで指定する。
+    is_cancelled は画像と画像の間で呼ばれ、True を返すと残りの画像を処理せずに止める。
     """
     return SimpleNamespace(
         sourcedir=sourcedir,
@@ -58,6 +99,7 @@ def build_ocr_args(output_dir, sourceimg=None, sourcedir=None):
         sourcepdf=None,
         output=output_dir,
         viz=False,
+        is_cancelled=is_cancelled,
         det_weights=os.path.join(SRC_DIR, "model", "deim-s-1024x1024.onnx"),
         det_classes=os.path.join(SRC_DIR, "config", "ndl.yaml"),
         det_score_threshold=0.3,
@@ -96,6 +138,12 @@ def run_ocr():
         # 出力名は入力名から決まるため、固定名で保存する
         image_path = os.path.join(work_dir, f"page.{extension}")
         file.save(image_path)
+        if not is_readable_image(image_path):
+            logger.warning("OCR request rejected: unreadable image (file=%r)", file.filename)
+            return jsonify(error="画像を読み込めません"), 400
+
+        # ブラウザ側の表示と座標を合わせるため、回転を反映してからOCRする（出力名は page のまま）
+        image_path = apply_exif_orientation(image_path)
 
         args = build_ocr_args(work_dir, sourceimg=image_path)
         try:
@@ -166,7 +214,9 @@ def run_ocr_batch():
     モデルの読み込みは process() の呼び出しごとに行われるため、
     1枚ずつ /api/ocr を呼ぶより、まとめて渡したほうが速い。
     読めない画像や形式違いは、その画像だけ error になり、他の画像は処理を続ける。
+    job が送られたら /api/ocr/cancel で途中から止められる（残りの画像は処理しない）。
     """
+    job_id = request.form.get("job", "")
     files = request.files.getlist("images")
     if not files:
         logger.warning("Batch OCR request rejected: no image files in request")
@@ -208,7 +258,12 @@ def run_ocr_batch():
 
         process_error = None
         if accepted:
-            args = build_ocr_args(output_dir, sourcedir=input_dir)
+            cancel_event = start_cancel_event(job_id) if job_id else None
+            args = build_ocr_args(
+                output_dir,
+                sourcedir=input_dir,
+                is_cancelled=cancel_event.is_set if cancel_event else None,
+            )
             try:
                 with ocr_lock:
                     ocr.process(args)
@@ -216,6 +271,12 @@ def run_ocr_batch():
                 # 途中まで出力された結果は返し、残りの画像にだけエラーを付ける
                 logger.exception("Batch OCR failed")
                 process_error = f"OCR処理に失敗しました: {error}"
+            finally:
+                if job_id:
+                    release_cancel_event(job_id)
+
+            if cancel_event and cancel_event.is_set():
+                logger.info("Batch OCR stopped by request (job=%s)", job_id)
 
         for index in accepted:
             xml_path = os.path.join(output_dir, f"{index:04d}.xml")
@@ -239,6 +300,16 @@ def run_ocr_batch():
     elapsed = time.perf_counter() - start_time
     logger.info("Batch OCR done (files=%d, elapsed=%.2f sec)", len(files), elapsed)
     return jsonify(results=results)
+
+
+@app.post("/api/ocr/cancel")
+def cancel_ocr_batch():
+    """/api/ocr/batch の job を止める。処理中の画像は終わらせ、そのあとの画像は処理しない。"""
+    job_id = request.form.get("job", "")
+    if job_id:
+        request_cancel(job_id)
+        logger.info("Batch OCR cancel requested (job=%s)", job_id)
+    return "", 204
 
 
 def main():
