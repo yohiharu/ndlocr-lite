@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>OCR XML Viewer</title>
+<title>OCR Viewer</title>
 
 <style>
 * {
@@ -51,7 +51,7 @@ body {
 
 /* 幅が足りないときに、ボタンや文字が縦に潰れないよう、ツールバーの項目は縮めない（状態表示は除く） */
 
-#toolbar > :not(#status) {
+#toolbar > :not(#status):not(#viewTools) {
     flex-shrink: 0;
 }
 
@@ -78,9 +78,79 @@ label.button {
     font-size: 13px;
 }
 
-button:hover,
+button:not(:disabled):hover,
 label.button:hover {
     background: #555;
+}
+
+/* 押せないボタンは薄くして、押せるボタンと見分けられるようにする */
+
+button:disabled {
+    opacity: .45;
+
+    cursor: default;
+}
+
+/* 実行（青）・停止（赤）・リセット（赤い文字）を色で見分ける。停止は動いている間だけ赤くする */
+
+.primaryButton {
+    border-color: #1677ff;
+
+    background: #1677ff;
+}
+
+.primaryButton:not(:disabled):hover {
+    background: #4090ff;
+}
+
+.stopButton:not(:disabled) {
+    border-color: #d04040;
+
+    background: #8b1a1a;
+}
+
+.stopButton:not(:disabled):hover {
+    background: #a82424;
+}
+
+.dangerButton,
+.folderReset {
+    border-color: #7a3b3b;
+
+    background: transparent;
+
+    color: #ff9b9b;
+}
+
+.dangerButton:not(:disabled):hover,
+.folderReset:not(:disabled):hover {
+    background: #3a2222;
+}
+
+/* 画像を表示しているあいだは、画像表示のボタンを押した状態に見せる */
+
+body:has(#backgroundImage.visible) #toggleImage {
+    border-color: #1677ff;
+
+    background: #1f3b5c;
+}
+
+/*
+ * 表示の調整は右端に寄せ、幅が足りないときは右寄せのまま折り返す。重ね方と倍率の間は広めに空ける。
+ * 中で折り返せるように、この枠はツールバーの幅まで縮む
+ */
+
+#viewTools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+
+    gap: 8px 20px;
+
+    min-width: 0;
+
+    margin-left: auto;
 }
 
 #imageInput {
@@ -103,10 +173,13 @@ label.button:hover {
     width: 40px;
 }
 
-/* 画像のパスなど長い文字列は、残りの幅で折り返す（ツールバーからはみ出さない） */
+/*
+ * 状態はOCR実行のすぐ右に出し、残りの幅を使う（表示の調整は右端に寄る）。
+ * 画像のパスなど長い文字列は、その幅で折り返す（ツールバーからはみ出さない）
+ */
 
 #status {
-    margin-left: auto;
+    flex: 1 1 160px;
 
     min-width: 0;
 
@@ -130,7 +203,7 @@ label.button:hover {
 }
 
 /* =========================
-   XML入力
+   左のパネル（ページ・検索）
 ========================= */
 
 #inputPanel {
@@ -196,6 +269,79 @@ label.button:hover {
     gap: 8px;
 
     padding: 10px;
+}
+
+/*
+ * ページのタブの操作。1行に「見出し ｜ ボタン」を置き、進み具合はそのボタンのすぐ下に出す。
+ * 上から作業の順（対象 → OCR → 種別判定）に並べる
+ */
+
+.controlRow {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    align-items: center;
+
+    gap: 6px 8px;
+
+    padding: 8px 10px;
+
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.controlLabel {
+    color: #888;
+
+    font-size: 12px;
+}
+
+.controlButtons {
+    display: flex;
+    flex-wrap: wrap;
+
+    gap: 8px;
+}
+
+/* 判定中は「次へ」に変わる。幅を変えず、隣の停止ボタンが押した位置へずれてこないようにする */
+
+#classifyButton {
+    min-width: 11em;
+}
+
+.controlRow .tabInfo {
+    grid-column: 2;
+
+    padding: 0;
+}
+
+/* リセットは実行のボタンから離して、一覧の下に置く */
+
+.panelFooter {
+    border-top: 1px solid #444;
+    border-bottom: 0;
+}
+
+/* 拡張子と種別の設定は、普段は畳んでおき、一覧を広く使う */
+
+.settingsPanel {
+    flex-shrink: 0;
+
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.settingsPanel summary {
+    padding: 8px 10px;
+
+    color: #aaa;
+
+    font-size: 12px;
+
+    cursor: pointer;
+
+    user-select: none;
+}
+
+.settingsPanel summary:hover {
+    color: white;
 }
 
 .extensionSettings {
@@ -388,15 +534,6 @@ dialog::backdrop {
     font-size: 12px;
 }
 
-.pageOCR:disabled,
-.folderOCR:disabled,
-.folderClassify:disabled,
-.folderReset:disabled {
-    opacity: .5;
-
-    cursor: default;
-}
-
 .tabInfo {
     padding: 0 10px 8px;
 
@@ -538,46 +675,6 @@ dialog::backdrop {
     color: #ff8a8a;
 }
 
-#xmlInput {
-    flex: 1;
-
-    width: 100%;
-
-    resize: none;
-
-    padding: 12px;
-
-    border: 0;
-    outline: 0;
-
-    background: #0c0c0c;
-
-    color: #ddd;
-
-    font-family:
-        Consolas,
-        "Courier New",
-        monospace;
-
-    font-size: 12px;
-
-    line-height: 1.5;
-}
-
-#parseButton {
-    margin: 10px;
-
-    padding: 10px;
-
-    background: #1677ff;
-
-    border: none;
-}
-
-#parseButton:hover {
-    background: #4090ff;
-}
-
 /* =========================
    表示領域
 ========================= */
@@ -639,7 +736,7 @@ dialog::backdrop {
     border-radius: 0 4px 4px 0;
 }
 
-#kindOverlay button:hover {
+#kindOverlay button:not(:disabled):hover {
     background: #333;
 }
 
@@ -651,12 +748,6 @@ dialog::backdrop {
     background: #1f3b5c;
 
     color: white;
-}
-
-#kindOverlay button:disabled {
-    opacity: .5;
-
-    cursor: default;
 }
 
 #viewport {
@@ -696,9 +787,9 @@ dialog::backdrop {
     transform-origin: top left;
 }
 
-/* 画像かOCR結果があるときだけ白い紙として出す。何も読み込んでいないときは出さない */
+/* 画像（読み込んだもの）かOCR結果があるときだけ白い紙として出す。何も読み込んでいないときは出さない */
 
-#page:has(#backgroundImage.visible),
+#page:has(#backgroundImage.visible[src]),
 #page:has(.ocr-line) {
     background: white;
 
@@ -907,87 +998,103 @@ dialog::backdrop {
 
 <div id="toolbar">
 
-    <label class="button">
-
-        画像を選択
-
-        <input
-            id="imageInput"
-            type="file"
-            accept="image/*"
-        >
-
-    </label>
-
-
-    <button id="toggleImage">
-        画像表示
-    </button>
-
-
-    <button id="ocrButton" disabled>
-        OCR実行
-    </button>
-    <!-- 種別判定中だけ出す。どのタブを開いていても止められるように、ツールバーに置く -->
-    <button id="classifyStopButton" hidden>
-        種別判定を止める
-    </button>
-
+    <!-- 左: 画像を選んでOCRする（作業の始まり）と、その状態 -->
 
     <div class="toolGroup">
 
-        <span>
-            OCR透明度
-        </span>
+        <label class="button">
 
-        <input
-            id="opacity"
-            type="range"
-            min="0"
-            max="100"
-            value="100"
-        >
+            画像を選択
 
-        <span id="opacityText">
-            100%
-        </span>
+            <input
+                id="imageInput"
+                type="file"
+                accept="image/*"
+            >
 
-    </div>
+        </label>
 
 
-    <button id="fitButton">
-        全体表示
-    </button>
-
-
-    <div class="toolGroup">
-
-        <button id="minusButton">
-            −
-        </button>
-
-        <input
-            id="zoom"
-            type="range"
-            min="10"
-            max="200"
-            value="30"
-        >
-
-        <span id="zoomText">
-            30%
-        </span>
-
-        <button id="plusButton">
-            ＋
+        <button id="ocrButton" class="primaryButton" disabled>
+            ▶ OCR実行
         </button>
 
     </div>
 
 
-    <span id="status">
-        XML未入力
-    </span>
+    <!-- 表示中の一覧のページのパスだけを出す（一覧にない画像を開いているときは空） -->
+
+    <span id="status"></span>
+
+
+    <!-- 右: 表示の調整（画像・文字の重ね方 ｜ 倍率） -->
+
+    <div id="viewTools">
+
+        <div class="toolGroup">
+
+            <!-- 画像を読み込めたときだけ押せる（画像がないのに白い紙を出さない） -->
+
+            <button id="toggleImage" disabled>
+                画像表示
+            </button>
+
+
+            <span>
+                OCR透明度
+            </span>
+
+            <input
+                id="opacity"
+                type="range"
+                min="0"
+                max="100"
+                value="100"
+            >
+
+            <span id="opacityText">
+                100%
+            </span>
+
+        </div>
+
+
+        <div class="toolGroup">
+
+            <span>
+                倍率
+            </span>
+
+            <button id="minusButton">
+                −
+            </button>
+
+            <input
+                id="zoom"
+                type="range"
+                min="10"
+                max="200"
+                value="30"
+            >
+
+            <button id="plusButton">
+                ＋
+            </button>
+
+            <span id="zoomText">
+                30%
+            </span>
+
+
+            <!-- 画像を読み込めたときだけ押せる -->
+
+            <button id="fitButton" disabled>
+                全体表示
+            </button>
+
+        </div>
+
+    </div>
 
 </div>
 
@@ -998,17 +1105,13 @@ dialog::backdrop {
 
 <div id="main">
 
-    <!-- XML -->
+    <!-- ページ・検索 -->
 
     <section id="inputPanel">
 
         <nav id="tabs">
 
-            <button class="tab active" data-tab="xmlTab">
-                XML
-            </button>
-
-            <button class="tab" data-tab="pagesTab">
+            <button class="tab active" data-tab="pagesTab">
                 ページ
             </button>
 
@@ -1019,130 +1122,163 @@ dialog::backdrop {
         </nav>
 
 
-        <!-- XML -->
-
-        <div id="xmlTab" class="tabPanel">
-
-        <textarea
-            id="xmlInput"
-            spellcheck="false"
-            placeholder="ここにOCR XMLを貼り付けてください"
-        ></textarea>
-
-
-        <button id="parseButton">
-            XMLを表示
-        </button>
-
-        </div>
-
-
         <!-- ページ（フォルダの一括OCR） -->
 
-        <div id="pagesTab" class="tabPanel" hidden>
+        <div id="pagesTab" class="tabPanel">
 
-            <div class="tabActions">
+            <!-- 上から作業の順に並べる。実行と停止は隣同士に置き、進み具合はそのすぐ下に出す -->
 
-                <button id="folderButton">
-                    フォルダを選択
-                </button>
+            <div class="controlRow">
 
+                <span class="controlLabel">対象</span>
 
-                <button id="batchButton" disabled>
-                    一括OCR実行
-                </button>
+                <div class="controlButtons">
 
-
-                <button id="stopButton" disabled>
-                    停止
-                </button>
-
-
-                <button id="classifyButton" disabled>
-                    種別判定を始める
-                </button>
-
-            </div>
-
-
-            <div class="tabActions">
-
-                <button id="resetKindButton" disabled>
-                    種別をリセット
-                </button>
-
-
-                <button id="resetOCRButton" disabled>
-                    OCR結果をリセット
-                </button>
-
-            </div>
-
-
-            <div class="extensionSettings">
-
-                <div>
-                    対象の拡張子（次にフォルダを選択したときから反映）
-                </div>
-
-                <div id="extensionChips"></div>
-
-                <form id="extensionForm" class="extensionForm">
-
-                    <input
-                        id="extensionInput"
-                        list="extensionCandidates"
-                        placeholder="例: png"
-                        autocomplete="off"
-                        spellcheck="false"
-                    >
-
-                    <button type="submit">
-                        追加
+                    <button id="folderButton">
+                        フォルダを選択
                     </button>
 
-                </form>
-
-                <datalist id="extensionCandidates"></datalist>
-
-            </div>
-
-
-            <div class="extensionSettings">
-
-                <div>
-                    種別（ここで登録した種別をページに付けられます）
                 </div>
 
-                <div id="kindChips"></div>
+            </div>
 
-                <form id="kindForm" class="extensionForm">
 
-                    <input
-                        id="kindInput"
-                        placeholder="例: 挿絵"
-                        maxlength="12"
-                        autocomplete="off"
-                        spellcheck="false"
-                    >
+            <div class="controlRow">
 
-                    <button type="submit">
-                        登録
+                <span class="controlLabel">OCR</span>
+
+                <div class="controlButtons">
+
+                    <button id="batchButton" class="primaryButton" disabled>
+                        ▶ 一括OCR実行
                     </button>
 
-                </form>
+
+                    <button id="stopButton" class="stopButton" disabled>
+                        ■ 停止
+                    </button>
+
+                </div>
+
+                <div id="batchProgress" class="tabInfo">
+                    フォルダを選択してください
+                </div>
 
             </div>
 
 
-            <div id="batchProgress" class="tabInfo">
-                フォルダを選択してください
+            <div class="controlRow">
+
+                <span class="controlLabel">種別判定</span>
+
+                <div class="controlButtons">
+
+                    <button id="classifyButton" class="primaryButton" disabled>
+                        種別判定を始める
+                    </button>
+
+
+                    <!-- 判定中だけ押せる。ほかのタブを開いていても Esc で止められる -->
+
+                    <button id="classifyStopButton" class="stopButton" disabled>
+                        ■ 停止
+                    </button>
+
+                </div>
+
+                <div id="classifyBar" class="tabInfo classifyBar" hidden></div>
+
             </div>
 
-            <div id="classifyBar" class="tabInfo classifyBar" hidden></div>
+
+            <details id="pageSettings" class="settingsPanel">
+
+                <summary>
+                    設定（対象の拡張子・種別の登録）
+                </summary>
+
+
+                <div class="extensionSettings">
+
+                    <div>
+                        対象の拡張子（次にフォルダを選択したときから反映）
+                    </div>
+
+                    <div id="extensionChips"></div>
+
+                    <form id="extensionForm" class="extensionForm">
+
+                        <input
+                            id="extensionInput"
+                            list="extensionCandidates"
+                            placeholder="例: png"
+                            autocomplete="off"
+                            spellcheck="false"
+                        >
+
+                        <button type="submit">
+                            追加
+                        </button>
+
+                    </form>
+
+                    <datalist id="extensionCandidates"></datalist>
+
+                </div>
+
+
+                <div class="extensionSettings">
+
+                    <div>
+                        種別（ここで登録した種別をページに付けられます）
+                    </div>
+
+                    <div id="kindChips"></div>
+
+                    <form id="kindForm" class="extensionForm">
+
+                        <input
+                            id="kindInput"
+                            placeholder="例: 挿絵"
+                            maxlength="12"
+                            autocomplete="off"
+                            spellcheck="false"
+                        >
+
+                        <button type="submit">
+                            登録
+                        </button>
+
+                    </form>
+
+                </div>
+
+            </details>
 
 
             <ul id="pageList"></ul>
+
+
+            <!-- 消す操作は、実行のボタンから離して一番下に置く -->
+
+            <div class="controlRow panelFooter">
+
+                <span class="controlLabel">リセット</span>
+
+                <div class="controlButtons">
+
+                    <button id="resetKindButton" class="dangerButton" disabled>
+                        種別をリセット
+                    </button>
+
+
+                    <button id="resetOCRButton" class="dangerButton" disabled>
+                        OCR結果をリセット
+                    </button>
+
+                </div>
+
+            </div>
 
         </div>
 
@@ -1264,7 +1400,7 @@ dialog::backdrop {
 
         <div class="dialogActions">
 
-            <button value="reuse">
+            <button value="reuse" class="primaryButton">
                 既存の結果を使う
             </button>
 
@@ -1285,11 +1421,11 @@ dialog::backdrop {
 
 <script>
 
-const xmlInput =
-    document.getElementById("xmlInput");
+const toggleImage =
+    document.getElementById("toggleImage");
 
-const parseButton =
-    document.getElementById("parseButton");
+const fitButton =
+    document.getElementById("fitButton");
 
 const page =
     document.getElementById("page");
@@ -1350,6 +1486,10 @@ let imageURL = null;
 
 let imageFile = null;
 
+/* 一覧にない画像（単一画像）のOCRが動いている */
+
+let singleOCRRunning = false;
+
 
 /* ==================================================
    エラー表示
@@ -1378,19 +1518,15 @@ function showError(message) {
 
 
 /* ==================================================
-   XML解析
+   OCR結果（サーバーが返す XML）を表示する
 ================================================== */
 
-function parseXML() {
+function parseXML(source) {
 
-    const source =
-        xmlInput.value.trim();
-
-
-    if (!source) {
+    if (!source.trim()) {
 
         showError(
-            "XMLを入力してください"
+            "OCR結果がありません"
         );
 
         return;
@@ -1415,7 +1551,7 @@ function parseXML() {
     if (parserError) {
 
         showError(
-            "XMLの解析に失敗しました"
+            "OCR結果を読み込めませんでした"
         );
 
         return;
@@ -1471,9 +1607,6 @@ function parseXML() {
 
     const lines =
         [...xml.querySelectorAll("LINE")];
-
-
-    let count = 0;
 
 
     lines.forEach((line, index) => {
@@ -1680,13 +1813,7 @@ ${order}`;
         );
 
 
-        count++;
-
     });
-
-
-    status.textContent =
-        `OCR ${count}件 / ${pageWidth} × ${pageHeight}`;
 
 
     fitPage();
@@ -1716,9 +1843,20 @@ function loadImage(file) {
 
 
     /*
-     * 一覧のページ以外の画像を開いたら、そのページは表示していないことにする。
-     * そのページのOCR結果と大きさは別の画像のものではないので消し、開いた画像の大きさで表示する
+     * 別の画像を開いたら、前の画像のOCR結果と大きさは使わず、開いた画像の大きさで表示する
+     * （一覧のページは、このあと showPage がそのページの結果を出す）
      */
+
+    if (file !== imageFile) {
+
+        ocrLayer.innerHTML = "";
+
+        pageSizeFromXML = false;
+
+    }
+
+
+    /* 一覧のページ以外の画像を開いたら、そのページは表示していないことにする */
 
     const current =
         batchPages[currentPageIndex];
@@ -1726,14 +1864,6 @@ function loadImage(file) {
     if (current && current.file !== file) {
 
         currentPageIndex = -1;
-
-        ocrLayer.innerHTML = "";
-
-        xmlInput.value = "";
-
-        pageSizeFromXML = false;
-
-        status.textContent = "XML未入力";
 
         renderPageList();
 
@@ -1751,7 +1881,13 @@ function loadImage(file) {
 
     imageFile = file;
 
-    ocrButton.disabled = false;
+    updateOCRButton();
+
+    /* 画像表示は、読み込めてから押せるようにする（ブラウザで表示できない形式なら押せないまま） */
+
+    toggleImage.disabled = true;
+
+    fitButton.disabled = true;
 
 
     imageURL =
@@ -1768,11 +1904,15 @@ function loadImage(file) {
 
 
     /*
-     * XMLのPAGEサイズがあるときは、そのサイズの領域いっぱいに画像を合わせる（OCRの座標はこのサイズ）。
-     * PAGEサイズがないときは、前のページの大きさを使わず、画像の大きさで表示する
+     * OCR結果にPAGEの大きさがあるときは、その大きさの領域いっぱいに画像を合わせる（OCRの座標はこの大きさ）。
+     * OCR結果がないときは、前のページの大きさを使わず、画像の大きさで表示する
      */
 
     backgroundImage.onload = () => {
+
+        toggleImage.disabled = false;
+
+        fitButton.disabled = false;
 
         if (!pageSizeFromXML) {
 
@@ -1788,9 +1928,16 @@ function loadImage(file) {
 
         }
 
+    };
 
-        status.textContent +=
-            ` / 画像 ${backgroundImage.naturalWidth}×${backgroundImage.naturalHeight}`;
+
+    /* 読み込めない画像（tif など）は出さない。壊れた画像の印や、中身のない白い紙を出さないため */
+
+    backgroundImage.onerror = () => {
+
+        backgroundImage.classList.remove(
+            "visible"
+        );
 
     };
 
@@ -1840,10 +1987,14 @@ async function runOCR() {
     }
 
 
-    ocrButton.disabled = true;
+    /* 送っている間に別の画像を開いたら、その画像に結果を出さない */
 
-    status.textContent =
-        "OCR処理中…";
+    const target =
+        imageFile;
+
+    singleOCRRunning = true;
+
+    updateOCRButton();
 
 
     const formData =
@@ -1851,7 +2002,7 @@ async function runOCR() {
 
     formData.append(
         "image",
-        imageFile
+        target
     );
 
 
@@ -1881,15 +2032,16 @@ async function runOCR() {
         }
 
 
-        xmlInput.value =
+        const source =
             await response.text();
 
-        parseXML();
+        if (imageFile === target) {
+
+            parseXML(source);
+
+        }
 
     } catch (error) {
-
-        status.textContent =
-            "OCR失敗";
 
         showError(
             error instanceof TypeError
@@ -1899,7 +2051,9 @@ async function runOCR() {
 
     } finally {
 
-        ocrButton.disabled = false;
+        singleOCRRunning = false;
+
+        updateOCRButton();
 
     }
 
@@ -2004,18 +2158,16 @@ viewport.addEventListener(
    画像表示/非表示
 ================================================== */
 
-document
-    .getElementById("toggleImage")
-    .addEventListener(
-        "click",
-        () => {
+toggleImage.addEventListener(
+    "click",
+    () => {
 
-            backgroundImage.classList.toggle(
-                "visible"
-            );
+        backgroundImage.classList.toggle(
+            "visible"
+        );
 
-        }
-    );
+    }
+);
 
 
 /* ==================================================
@@ -2164,32 +2316,9 @@ function fitPage() {
 }
 
 
-document
-    .getElementById("fitButton")
-    .addEventListener(
-        "click",
-        fitPage
-    );
-
-
-/* ==================================================
-   Ctrl + Enter
-================================================== */
-
-xmlInput.addEventListener(
-    "keydown",
-    event => {
-
-        if (
-            event.ctrlKey &&
-            event.key === "Enter"
-        ) {
-
-            parseXML();
-
-        }
-
-    }
+fitButton.addEventListener(
+    "click",
+    fitPage
 );
 
 
@@ -2354,6 +2483,9 @@ const resetKindButton =
 
 const resetOCRButton =
     document.getElementById("resetOCRButton");
+
+const pageSettings =
+    document.getElementById("pageSettings");
 
 const pageList =
     document.getElementById("pageList");
@@ -2964,17 +3096,63 @@ function updateBatchControls() {
             ? "次へ"
             : "種別判定を始める";
 
-    classifyStopButton.hidden = !classifyRunning;
+    classifyStopButton.disabled = !classifyRunning;
 
-    /* リセットは、OCR中と、フォルダがないときは使えない */
+    /* リセットは、OCR中と、消すもの（種別・OCRの結果や失敗）がないときは使えない */
 
     resetKindButton.disabled =
         isOCRBusy()
-        || batchPages.length === 0;
+        || batchPages.every(batchPage =>
+            batchPage.kind === DEFAULT_PAGE_KIND
+        );
 
     resetOCRButton.disabled =
         isOCRBusy()
-        || batchPages.length === 0;
+        || batchPages.every(batchPage =>
+            batchPage.status === "pending"
+        );
+
+    updateOCRButton();
+
+}
+
+
+/*
+ * OCR実行は、画像があり、その画像のOCRが動いていないときだけ押せる。
+ * 一覧のページを開いているときは、一覧のOCR（一括・1ページ）が終わるまで押せない。
+ * 一番上には状態を出さないので、開いている画像を処理している間はボタンに「処理中…」と出す
+ */
+
+function updateOCRButton() {
+
+    const current =
+        batchPages[currentPageIndex];
+
+    const isListPage =
+        Boolean(current) && current.file === imageFile;
+
+    ocrButton.disabled =
+        !imageFile
+        || singleOCRRunning
+        || (isListPage && isOCRBusy());
+
+    ocrButton.textContent =
+        singleOCRRunning || (isListPage && current.status === "running")
+            ? "処理中…"
+            : "▶ OCR実行";
+
+}
+
+
+/* 一番上には、表示中の一覧のページのパスだけを出す。一覧にない画像を開いているときは何も出さない */
+
+function updateStatus() {
+
+    const batchPage =
+        batchPages[currentPageIndex];
+
+    status.textContent =
+        batchPage ? batchPage.name : "";
 
 }
 
@@ -3010,20 +3188,6 @@ function updateBatchProgress() {
     batchProgress.textContent =
         (stopRequested ? "停止中… " : "処理中… ")
         + summary;
-
-
-    /* 1ページだけのOCR中は、表示中のページの「OCR処理中…」を上書きしない */
-
-    if (!batchRunning) {
-
-        return;
-    }
-
-
-    /* ツールバーには、ページを表示していなくても進捗が見えるように出す */
-
-    status.textContent =
-        `一括OCR ${done} / ${batchPages.length}`;
 
 }
 
@@ -3126,7 +3290,7 @@ function createRowButton(label, className, disabled, run) {
 }
 
 
-/* フォルダ配下（サブフォルダを含む）のページ数と、完了したページ数、種別なしのページ数 */
+/* フォルダ配下（サブフォルダを含む）のページ数と、完了・未処理・種別なしのページ数 */
 
 function countFolderPages(folder) {
 
@@ -3135,6 +3299,11 @@ function countFolderPages(folder) {
     let done =
         folder.pages.filter(({ batchPage }) =>
             batchPage.status === "done"
+        ).length;
+
+    let pending =
+        folder.pages.filter(({ batchPage }) =>
+            batchPage.status === "pending"
         ).length;
 
     let unclassified =
@@ -3152,12 +3321,14 @@ function countFolderPages(folder) {
 
         done += count.done;
 
+        pending += count.pending;
+
         unclassified += count.unclassified;
 
     });
 
 
-    return { total, done, unclassified };
+    return { total, done, pending, unclassified };
 
 }
 
@@ -3246,10 +3417,12 @@ function appendFolderContents(node, depth) {
                 isOCRBusy() || classifyRunning || count.unclassified === 0,
                 () => startClassify(pagesUnder(folder), folder.key)
             ),
+            /* リセットは、消すもの（種別・OCRの結果や失敗）がないときは押せない */
+
             createRowButton(
                 "種別リセット",
                 "folderReset",
-                isOCRBusy(),
+                isOCRBusy() || count.unclassified === count.total,
                 () => resetKinds(
                     pagesUnder(folder),
                     `「${folder.key}」の中のページの種別を外します。よろしいですか？`
@@ -3258,7 +3431,7 @@ function appendFolderContents(node, depth) {
             createRowButton(
                 "OCRリセット",
                 "folderReset",
-                isOCRBusy(),
+                isOCRBusy() || count.pending === count.total,
                 () => resetOCRResults(
                     pagesUnder(folder),
                     `「${folder.key}」の中のページのOCR結果を消します（種別は残します）。よろしいですか？`
@@ -3352,7 +3525,7 @@ function appendFolderContents(node, depth) {
             createOCRButton(batchPage),
             createRowButton(
                 "OCRリセット",
-                "pageOCR",
+                "pageOCR dangerButton",
                 isOCRBusy() || batchPage.status === "pending",
                 () => resetOCRResults(
                     [batchPage],
@@ -3391,9 +3564,13 @@ function renderPageList() {
     );
 
 
-    /* 表示中の画像の種別も、一覧と同じタイミングで合わせる */
+    /* 表示中の画像の種別・一番上のパス・ボタンの押せる/押せないも、一覧と同じタイミングで合わせる */
 
     renderKindOverlay();
+
+    updateStatus();
+
+    updateBatchControls();
 
 }
 
@@ -3890,17 +4067,11 @@ async function runPageOCR(batchPage) {
 
     updateBatchControls();
 
+    /* 停止ボタンのすぐ下の進み具合にも、処理中と出す */
+
+    updateBatchProgress();
+
     renderPageList();
-
-
-    /* 表示中のページなら、ツールバーにも処理中と出す */
-
-    if (batchPages[currentPageIndex] === batchPage) {
-
-        status.textContent =
-            "OCR処理中…";
-
-    }
 
 
     try {
@@ -4065,6 +4236,12 @@ function startClassify(targetPages, folderKey = "") {
             "種別を登録してから、種別判定を始めてください"
         );
 
+        /* 登録する欄は普段畳んでいるので、開いて入力できるようにする */
+
+        pageSettings.open = true;
+
+        kindInput.focus();
+
         return;
     }
 
@@ -4214,11 +4391,13 @@ function showPage(index) {
     currentPageIndex = index;
 
 
-    /* 画像。ブラウザで表示できない形式なら画像は出さない（OCR実行もできない） */
+    /* 画像。ブラウザで画像として扱えない形式なら画像は出さない（OCR実行もできない） */
 
     imageFile = null;
 
-    ocrButton.disabled = true;
+    toggleImage.disabled = true;
+
+    fitButton.disabled = true;
 
     backgroundImage.classList.remove(
         "visible"
@@ -4228,6 +4407,12 @@ function showPage(index) {
 
         loadImage(batchPage.file);
 
+    } else {
+
+        /* 前のページの画像を、画像表示で出せないようにする */
+
+        backgroundImage.removeAttribute("src");
+
     }
 
 
@@ -4235,32 +4420,20 @@ function showPage(index) {
 
     if (batchPage.xml) {
 
-        xmlInput.value = batchPage.xml;
-
-        parseXML();
+        parseXML(batchPage.xml);
 
     } else {
 
         ocrLayer.innerHTML = "";
 
-        /* 前のページのXMLを残さないように、XMLの欄も空にする */
-
-        xmlInput.value = "";
-
         /* 結果がないのでPAGEの大きさもない。画像の大きさで表示する（onload で合わせる） */
 
         pageSizeFromXML = false;
 
-        const state =
-            batchPage.status === "error"
-                ? batchPage.error
-                : STATUS_LABELS[batchPage.status];
-
-        status.textContent =
-            `${batchPage.name} / ${state}`;
-
     }
 
+
+    /* 一番上のパスと、OCR実行のボタンも合わせる */
 
     renderPageList();
 
@@ -5520,11 +5693,6 @@ updateBatchControls();
 /* ==================================================
    初期化
 ================================================== */
-
-parseButton.addEventListener(
-    "click",
-    parseXML
-);
 
 setZoom(30);
 
