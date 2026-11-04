@@ -3,6 +3,7 @@
 #
 # 初回のみ uv の導入（未導入の場合）、仮想環境 .venv の作成、依存関係のインストールを行い、
 # 2回目以降はそのまま server.py を起動する（--open 指定時のみブラウザでページを開く）。
+# ページ（React）は、ビルドがない・ソースが変わったときだけ npm でビルドする（Node.js 20.19 以降が必要）。
 # Python は uv が 3.10〜3.13 のものを見つけ、無ければ取得するため、システムの Python 環境は問わない。
 # （onnxruntime 1.23.2・numpy 2.2.2 などが 3.13 までの wheel しか出していないため、3.14 以降は使わない）
 #
@@ -100,12 +101,39 @@ for model in \
     [ -f "$ROOT_DIR/$model" ] || die "モデルファイルがありません: $model"
 done
 
-# 4. ポートの空き確認
+# 4. ページのビルド（page/dist がない・ソースが dist より新しいときだけ）
+PAGE_DIR="$ROOT_DIR/page"
+DIST_INDEX="$PAGE_DIR/dist/index.html"
+
+page_needs_build() {
+    [ -f "$DIST_INDEX" ] || return 0
+    [ -n "$(find "$PAGE_DIR/src" "$PAGE_DIR/index.html" "$PAGE_DIR/package.json" "$PAGE_DIR/package-lock.json" \
+        "$PAGE_DIR/vite.config.ts" "$PAGE_DIR/tsconfig.json" -newer "$DIST_INDEX" -print -quit 2>/dev/null)" ]
+}
+
+if page_needs_build; then
+    if command -v npm >/dev/null 2>&1; then
+        # 依存関係は package-lock.json が変わったときだけ入れ直す（npm が node_modules/.package-lock.json を書く）
+        if [ ! -f "$PAGE_DIR/node_modules/.package-lock.json" ] \
+            || [ "$PAGE_DIR/package-lock.json" -nt "$PAGE_DIR/node_modules/.package-lock.json" ]; then
+            echo "[INFO] ページの依存関係をインストールします"
+            (cd "$PAGE_DIR" && npm ci)
+        fi
+        echo "[INFO] ページをビルドします: $PAGE_DIR/dist"
+        (cd "$PAGE_DIR" && npm run build)
+    elif [ -f "$DIST_INDEX" ]; then
+        echo "[WARN] npm が見つからないため、前回ビルドしたページを使います（ページのソースの変更は反映されません）" >&2
+    else
+        die "ページのビルドに Node.js（20.19 以降）と npm が必要です。導入してから再実行してください（https://nodejs.org/）。"
+    fi
+fi
+
+# 5. ポートの空き確認
 if (exec 3<>"/dev/tcp/$HOST/$PORT") 2>/dev/null; then
     die "ポート $PORT は既に使用されています。別のポートを指定してください（例: ./page/start.sh 8080）。"
 fi
 
-# 5. --open 指定時のみ、サーバー起動後にブラウザを開く（起動完了を待ってから）
+# 6. --open 指定時のみ、サーバー起動後にブラウザを開く（起動完了を待ってから）
 if [ "$OPEN_BROWSER" -eq 1 ]; then
     (
         for _ in $(seq 1 60); do

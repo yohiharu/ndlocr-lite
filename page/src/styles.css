@@ -1,0 +1,1015 @@
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: system-ui, sans-serif;
+    background: #222;
+}
+
+/* ツールバーは折り返すので、高さは中身に合わせ、残りをメインに使う */
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+/* React を描画する入れ物。中身（ツールバー・メイン）が body の flex の子として並ぶよう、箱を作らない */
+
+#root {
+    display: contents;
+}
+
+/* =========================
+   ツールバー
+========================= */
+
+#toolbar {
+    min-height: 54px;
+    flex-shrink: 0;
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+
+    padding: 7px 10px;
+
+    background: #111;
+    color: white;
+
+    border-bottom: 1px solid #444;
+}
+
+/* 幅が足りないときに、ボタンや文字が縦に潰れないよう、ツールバーの項目は縮めない（状態表示は除く） */
+
+#toolbar > :not(#status):not(#viewTools) {
+    flex-shrink: 0;
+}
+
+/* 透明度・拡大縮小の操作は、折り返すときも1かたまりで動く */
+
+.toolGroup {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+button,
+label.button {
+    padding: 6px 12px;
+
+    border: 1px solid #666;
+    border-radius: 4px;
+
+    background: #333;
+    color: white;
+
+    cursor: pointer;
+
+    font-size: 13px;
+}
+
+button:not(:disabled):hover,
+label.button:hover {
+    background: #555;
+}
+
+/* 押せないボタンは薄くして、押せるボタンと見分けられるようにする */
+
+button:disabled {
+    opacity: .45;
+
+    cursor: default;
+}
+
+/* 実行（青）・停止（赤）・リセット（赤い文字）を色で見分ける。停止は動いている間だけ赤くする */
+
+.primaryButton {
+    border-color: #1677ff;
+
+    background: #1677ff;
+}
+
+.primaryButton:not(:disabled):hover {
+    background: #4090ff;
+}
+
+.stopButton:not(:disabled) {
+    border-color: #d04040;
+
+    background: #8b1a1a;
+}
+
+.stopButton:not(:disabled):hover {
+    background: #a82424;
+}
+
+.dangerButton,
+.folderReset {
+    border-color: #7a3b3b;
+
+    background: transparent;
+
+    color: #ff9b9b;
+}
+
+.dangerButton:not(:disabled):hover,
+.folderReset:not(:disabled):hover {
+    background: #3a2222;
+}
+
+/* 画像を表示しているあいだは、画像表示のボタンを押した状態に見せる */
+
+body:has(#backgroundImage.visible) #toggleImage {
+    border-color: #1677ff;
+
+    background: #1f3b5c;
+}
+
+/*
+ * 表示の調整は右端に寄せ、幅が足りないときは右寄せのまま折り返す。重ね方と倍率の間は広めに空ける。
+ * 中で折り返せるように、この枠はツールバーの幅まで縮む
+ */
+
+#viewTools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+
+    gap: 8px 20px;
+
+    min-width: 0;
+
+    margin-left: auto;
+}
+
+#imageInput {
+    display: none;
+}
+
+#zoom {
+    width: 100px;
+}
+
+#opacity {
+    width: 100px;
+}
+
+#zoomText {
+    width: 45px;
+}
+
+#opacityText {
+    width: 40px;
+}
+
+/*
+ * 状態はOCR実行のすぐ右に出し、残りの幅を使う（表示の調整は右端に寄る）。
+ * 画像のパスなど長い文字列は、その幅で折り返す（ツールバーからはみ出さない）
+ */
+
+#status {
+    flex: 1 1 160px;
+
+    min-width: 0;
+
+    color: #aaa;
+
+    font-size: 12px;
+
+    overflow-wrap: anywhere;
+}
+
+/* =========================
+   メイン
+========================= */
+
+#main {
+    display: flex;
+
+    flex: 1;
+
+    min-height: 0;
+}
+
+/* =========================
+   左のパネル（ページ・検索）
+========================= */
+
+#inputPanel {
+    width: 400px;
+
+    flex-shrink: 0;
+
+    display: flex;
+    flex-direction: column;
+
+    background: #181818;
+
+    border-right: 1px solid #444;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+#tabs {
+    display: flex;
+
+    flex-shrink: 0;
+
+    border-bottom: 1px solid #444;
+}
+
+.tab {
+    flex: 1;
+
+    padding: 10px 0;
+
+    border: 0;
+    border-radius: 0;
+
+    background: #181818;
+
+    color: #aaa;
+}
+
+.tab.active {
+    background: #222;
+
+    color: white;
+
+    box-shadow: inset 0 -2px 0 #1677ff;
+}
+
+.tabPanel {
+    flex: 1;
+
+    min-height: 0;
+
+    display: flex;
+    flex-direction: column;
+}
+
+.tabActions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+
+    gap: 8px;
+
+    padding: 10px;
+}
+
+/*
+ * ページのタブの操作。1行に「見出し ｜ ボタン」を置き、進み具合はそのボタンのすぐ下に出す。
+ * 上から作業の順（対象 → OCR → 種別判定）に並べる
+ */
+
+.controlRow {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    align-items: center;
+
+    gap: 6px 8px;
+
+    padding: 8px 10px;
+
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.controlLabel {
+    color: #888;
+
+    font-size: 12px;
+}
+
+.controlButtons {
+    display: flex;
+    flex-wrap: wrap;
+
+    gap: 8px;
+}
+
+/* 判定中は「次へ」に変わる。幅を変えず、隣の停止ボタンが押した位置へずれてこないようにする */
+
+#classifyButton {
+    min-width: 11em;
+}
+
+.controlRow .tabInfo {
+    grid-column: 2;
+
+    padding: 0;
+}
+
+/* リセットは実行のボタンから離して、一覧の下に置く */
+
+.panelFooter {
+    border-top: 1px solid #444;
+    border-bottom: 0;
+}
+
+/* 拡張子と種別の設定は、普段は畳んでおき、一覧を広く使う */
+
+.settingsPanel {
+    flex-shrink: 0;
+
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.settingsPanel summary {
+    padding: 8px 10px;
+
+    color: #aaa;
+
+    font-size: 12px;
+
+    cursor: pointer;
+
+    user-select: none;
+}
+
+.settingsPanel summary:hover {
+    color: white;
+}
+
+.extensionSettings {
+    padding: 0 10px 8px;
+
+    color: #aaa;
+
+    font-size: 12px;
+}
+
+#extensionChips,
+#kindChips {
+    display: flex;
+    flex-wrap: wrap;
+
+    gap: 6px;
+
+    margin-top: 6px;
+}
+
+.extensionChip {
+    display: inline-flex;
+    align-items: center;
+
+    gap: 4px;
+
+    padding: 2px 4px 2px 8px;
+
+    border: 1px solid #666;
+    border-radius: 12px;
+
+    background: #2a2a2a;
+
+    color: #ddd;
+}
+
+.extensionChip button {
+    padding: 0 6px;
+
+    border-radius: 10px;
+
+    font-size: 12px;
+
+    line-height: 1.5;
+}
+
+.extensionForm {
+    display: flex;
+
+    gap: 6px;
+
+    margin-top: 8px;
+}
+
+#extensionInput,
+#kindInput {
+    flex: 1;
+
+    min-width: 0;
+
+    max-width: 160px;
+
+    padding: 4px 6px;
+
+    border: 1px solid #666;
+    border-radius: 4px;
+
+    background: #0c0c0c;
+
+    color: white;
+
+    font-size: 12px;
+}
+
+dialog {
+    width: min(420px, calc(100vw - 32px));
+
+    padding: 16px 18px;
+
+    border: 1px solid #666;
+    border-radius: 6px;
+
+    background: #111;
+
+    color: white;
+
+    font-size: 13px;
+
+    line-height: 1.7;
+}
+
+dialog::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.dialogActions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+
+    gap: 8px;
+
+    margin-top: 14px;
+}
+
+#searchInput {
+    flex: 1;
+
+    min-width: 0;
+
+    padding: 6px 8px;
+
+    border: 1px solid #666;
+    border-radius: 4px;
+
+    background: #0c0c0c;
+
+    color: white;
+
+    font-size: 13px;
+}
+
+.pageKind {
+    flex-shrink: 0;
+
+    padding: 4px 6px;
+
+    border: 1px solid #666;
+    border-radius: 4px;
+
+    background: #0c0c0c;
+
+    color: white;
+
+    font-size: 12px;
+}
+
+.searchKindRow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+
+    gap: 8px;
+
+    padding: 0 10px 8px;
+
+    color: #aaa;
+
+    font-size: 12px;
+}
+
+#searchKinds {
+    display: flex;
+    flex-wrap: wrap;
+
+    gap: 12px;
+}
+
+#searchKinds label {
+    display: flex;
+    align-items: center;
+
+    gap: 4px;
+
+    color: #ddd;
+
+    cursor: pointer;
+}
+
+.pageMeta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: 8px;
+}
+
+.classifyBar {
+    color: #8ab4ff;
+}
+
+.pageOCR,
+.folderOCR,
+.folderClassify,
+.folderReset {
+    flex-shrink: 0;
+
+    padding: 3px 8px;
+
+    font-size: 12px;
+}
+
+.tabInfo {
+    padding: 0 10px 8px;
+
+    color: #aaa;
+
+    font-size: 12px;
+}
+
+#pageList,
+#searchResults {
+    flex: 1;
+
+    margin: 0;
+    padding: 0;
+
+    overflow-y: auto;
+
+    list-style: none;
+}
+
+.listItem {
+    padding: 8px 10px;
+
+    border-bottom: 1px solid #2a2a2a;
+
+    color: #ddd;
+
+    font-size: 12px;
+
+    cursor: pointer;
+}
+
+.listItem:hover {
+    background: #2a2a2a;
+}
+
+.listItem.current {
+    background: #1f3b5c;
+}
+
+.folderItem {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+
+    padding: 6px 10px;
+
+    border-bottom: 1px solid #2a2a2a;
+
+    background: #1c1c1c;
+
+    color: #ddd;
+
+    font-size: 12px;
+
+    cursor: pointer;
+
+    user-select: none;
+}
+
+.folderItem:hover {
+    background: #2a2a2a;
+}
+
+/* フォルダの行のボタンは名前の下の行に並べる。名前の幅を狭めないように */
+
+.folderActions {
+    flex-basis: 100%;
+
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+
+    padding-left: 18px;
+}
+
+.folderCaret {
+    flex-shrink: 0;
+
+    width: 12px;
+
+    color: #888;
+}
+
+.folderName {
+    flex: 1;
+
+    min-width: 0;
+
+    font-weight: bold;
+
+    word-break: break-all;
+}
+
+.folderCount {
+    flex-shrink: 0;
+
+    color: #888;
+}
+
+.folderCount.complete {
+    color: #7fd17f;
+}
+
+.listName {
+    color: #8ab4ff;
+
+    word-break: break-all;
+}
+
+.listText {
+    margin-top: 2px;
+
+    font-size: 14px;
+
+    word-break: break-all;
+}
+
+.listText mark {
+    background: #ffd54f;
+
+    color: #111;
+}
+
+.pageStatus.pending {
+    color: #888;
+}
+
+.pageStatus.queued {
+    color: #b9a7ff;
+}
+
+.pageStatus.running {
+    color: #ffd166;
+}
+
+.pageStatus.done {
+    color: #7fd17f;
+}
+
+.pageStatus.error {
+    color: #ff8a8a;
+}
+
+/* =========================
+   表示領域
+========================= */
+
+/* 表示の枠。種別の選択をスクロールしても動かない位置に重ねるため、表示領域を包む */
+
+#viewerFrame {
+    position: relative;
+
+    flex: 1;
+
+    min-width: 0;
+    min-height: 0;
+
+    display: flex;
+}
+
+/* 表示中のページの種別。画像の左上に重ねる */
+
+#kindOverlay {
+    position: absolute;
+
+    top: 10px;
+    left: 10px;
+
+    z-index: 5;
+
+    display: flex;
+
+    padding: 4px;
+
+    border: 1px solid #555;
+    border-radius: 6px;
+
+    background: rgba(17, 17, 17, .85);
+}
+
+#kindOverlay button {
+    padding: 4px 10px;
+
+    border-radius: 0;
+
+    background: #222;
+
+    color: #bbb;
+
+    font-size: 13px;
+}
+
+#kindOverlay button + button {
+    margin-left: -1px;
+}
+
+#kindOverlay button:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+#kindOverlay button:last-child {
+    border-radius: 0 4px 4px 0;
+}
+
+#kindOverlay button:not(:disabled):hover {
+    background: #333;
+}
+
+#kindOverlay button.active {
+    position: relative;
+
+    border-color: #1677ff;
+
+    background: #1f3b5c;
+
+    color: white;
+}
+
+#viewport {
+    position: relative;
+
+    flex: 1;
+
+    overflow: auto;
+
+    background:
+        linear-gradient(45deg, #333 25%, transparent 25%),
+        linear-gradient(-45deg, #333 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #333 75%),
+        linear-gradient(-45deg, transparent 75%, #333 75%);
+
+    background-size: 30px 30px;
+
+    background-position:
+        0 0,
+        0 15px,
+        15px -15px,
+        -15px 0;
+}
+
+/* =========================
+   ページ
+========================= */
+
+#page {
+    position: relative;
+
+    width: 6016px;
+    height: 4016px;
+
+    margin: 30px;
+
+    transform-origin: top left;
+}
+
+/* 画像（読み込んだもの）かOCR結果があるときだけ白い紙として出す。何も読み込んでいないときは出さない */
+
+#page:has(#backgroundImage.visible[src]),
+#page:has(.ocr-line) {
+    background: white;
+
+    box-shadow: 0 0 20px #000;
+}
+
+/* =========================
+   原画像
+========================= */
+
+#backgroundImage {
+    position: absolute;
+
+    left: 0;
+    top: 0;
+
+    width: 100%;
+    height: 100%;
+
+    object-fit: fill;
+
+    /* OCRで反映した回転で表示するときは、左上を基準に回す（layoutBackgroundImage） */
+
+    transform-origin: top left;
+
+    display: none;
+
+    z-index: 1;
+
+    pointer-events: none;
+}
+
+#backgroundImage.visible {
+    display: block;
+}
+
+/* =========================
+   OCRレイヤー
+========================= */
+
+#ocrLayer {
+    position: absolute;
+
+    left: 0;
+    top: 0;
+
+    width: 100%;
+    height: 100%;
+
+    z-index: 2;
+
+    pointer-events: none;
+}
+
+.ocr-line {
+    position: absolute;
+
+    white-space: nowrap;
+
+    color: #ff0000;
+
+    font-family:
+        "Yu Mincho",
+        "Hiragino Mincho ProN",
+        "Noto Serif JP",
+        "Noto Serif CJK JP",
+        serif;
+
+    font-weight: normal;
+
+    writing-mode: vertical-rl;
+
+    text-orientation: upright;
+
+    transform-origin: top right;
+
+    cursor: pointer;
+
+    pointer-events: auto;
+
+    text-shadow:
+        0 0 2px white,
+        0 0 2px white,
+        0 0 2px white;
+}
+
+.ocr-line:hover {
+    background: rgba(255, 255, 0, .4);
+
+    color: #ff0000;
+}
+
+.ocr-line.selected {
+    background: rgba(255, 165, 0, .55);
+
+    outline: 1px solid #ff6600;
+}
+
+/* 横書き */
+
+.ocr-line.horizontal {
+    writing-mode: horizontal-tb;
+}
+
+/* =========================
+   画像ドロップ
+========================= */
+
+#dropMessage {
+    position: fixed;
+
+    left: 50%;
+    top: 50%;
+
+    transform: translate(-50%, -50%);
+
+    z-index: 1000;
+
+    padding: 30px 50px;
+
+    border: 3px dashed #fff;
+
+    border-radius: 12px;
+
+    background: rgba(0, 0, 0, .75);
+
+    color: white;
+
+    font-size: 20px;
+
+    display: none;
+
+    pointer-events: none;
+}
+
+#dropMessage.visible {
+    display: block;
+}
+
+/* =========================
+   OCR詳細
+========================= */
+
+#details {
+    position: fixed;
+
+    right: 15px;
+    bottom: 15px;
+
+    width: 330px;
+
+    padding: 12px;
+
+    background: rgba(20, 20, 20, .95);
+
+    color: white;
+
+    border: 1px solid #555;
+
+    border-radius: 6px;
+
+    z-index: 2000;
+
+    display: none;
+
+    font-size: 12px;
+}
+
+/* 見出しの右端に閉じるボタン（☓）を置く */
+
+#details .detailsHeader {
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+}
+
+#detailsClose {
+    padding: 0 7px;
+
+    border-color: #555;
+
+    background: transparent;
+
+    font-size: 14px;
+
+    line-height: 1.5;
+}
+
+#details pre {
+    white-space: pre-wrap;
+
+    margin: 8px 0 0;
+}
+
+/* =========================
+   エラー
+========================= */
+
+#error {
+    position: fixed;
+
+    left: 50%;
+    top: 80px;
+
+    transform: translateX(-50%);
+
+    z-index: 3000;
+
+    max-width: 700px;
+
+    padding: 12px 20px;
+
+    background: #b00020;
+
+    color: white;
+
+    border-radius: 5px;
+
+    display: none;
+}

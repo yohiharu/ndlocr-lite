@@ -11,3 +11,5 @@
 /4ab7ecc3-53fb-b3e7-64e8-a809b5a483d2/
 **/.venv/**
 uv.lock
+/page/node_modules/
+/page/dist/

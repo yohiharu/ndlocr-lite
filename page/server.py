@@ -2,7 +2,7 @@
 
 画像をアップロードするとNDL古典籍OCR-Liteでテキスト化し、
 OCR結果のXMLを返す。複数画像をまとめて送る /api/ocr/batch もある。
-index.html はこのサーバーから配信される。
+ページ（React で作り、page/dist/ にビルドしたもの）はこのサーバーから配信される。
 
 起動例:
     ./page/start.sh   （uv で .venv を作成し、依存関係を入れてから起動する）
@@ -25,6 +25,10 @@ from PIL.ExifTags import Base
 PAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(PAGE_DIR)
 SRC_DIR = os.path.join(ROOT_DIR, "src")
+
+# ページのビルド結果（cd page && npm run build で作る。start.sh は必要なときに自動でビルドする）
+DIST_DIR = os.path.join(PAGE_DIR, "dist")
+DIST_ASSETS_DIR = os.path.join(DIST_DIR, "assets")
 
 # ocr.py は src/ 直下のモジュールを import するため、パスを通す
 sys.path.insert(0, SRC_DIR)
@@ -119,7 +123,20 @@ def build_ocr_args(output_dir, sourceimg=None, sourcedir=None, is_cancelled=None
 
 @app.get("/")
 def index():
-    return send_from_directory(PAGE_DIR, "index.html")
+    if not os.path.isfile(os.path.join(DIST_DIR, "index.html")):
+        logger.error("Page is not built: %s", DIST_DIR)
+        return Response(
+            "ページがビルドされていません。./page/start.sh で起動するか、"
+            "cd page && npm install && npm run build を実行してください。\n",
+            status=503,
+            mimetype="text/plain; charset=utf-8",
+        )
+    return send_from_directory(DIST_DIR, "index.html")
+
+
+@app.get("/assets/<path:filename>")
+def page_assets(filename):
+    return send_from_directory(DIST_ASSETS_DIR, filename)
 
 
 @app.post("/api/ocr")
